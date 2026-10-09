@@ -48,10 +48,14 @@ wait_for_dns_ready() {
 
 start_adguardhome() {
   # check if AdGuardHome is already running
-  if [ -f "$PID_FILE" ] && ps | grep -w "$adg_pid" | grep -q "AdGuardHome"; then
+  if [ -f "$PID_FILE" ] && ps | grep -w "$(cat "$PID_FILE")" | grep -q "AdGuardHome"; then
     log "AdGuardHome is already running" "AdGuardHome 已经在运行"
     exit 0
   fi
+
+  # kill any stray AdGuardHome processes left over from a stale/missing PID
+  # file before spawning a new one, otherwise instances pile up over time
+  pkill -f "$BIN_DIR/AdGuardHome" 2>/dev/null
 
   # to fix https://github.com/AdguardTeam/AdGuardHome/issues/7002
   export SSL_CERT_DIR="/system/etc/security/cacerts/"
@@ -111,9 +115,18 @@ stop_adguardhome() {
     rm "$PID_FILE"
     log "🔴 AdGuardHome stopped [PID: $pid]" "🔴 AdGuardHome 已停止 [PID: $pid]"
   else
-    pkill -f "AdGuardHome" || pkill -9 -f "AdGuardHome"
+    # Match the binary path only. A bare "AdGuardHome" pattern also matches the
+    # inotify watcher and the watchdog (their command lines contain the module
+    # folder), which would kill the very things that keep the hijack alive.
+    pkill -f "$BIN_DIR/AdGuardHome" || pkill -9 -f "$BIN_DIR/AdGuardHome"
     log "🔴 AdGuardHome force stopped" "🔴 AdGuardHome 强制停止"
   fi
+
+  # Sweep any instance the PID file did not know about. A stale PID file used to
+  # leave orphaned resolvers behind, and the next start then fought them for
+  # port $redir_port.
+  pkill -f "$BIN_DIR/AdGuardHome" 2>/dev/null
+
   update_description "🔴 Stopped" "🔴 已停止"
 }
 
@@ -123,6 +136,25 @@ toggle_adguardhome() {
   else
     start_adguardhome
   fi
+}
+
+ensure_adguardhome() {
+  # Watchdog entry point. An intentional module disable drops a "disable" marker
+  # into the module folder; nothing here may fight that decision.
+  [ -f "${MOD_PATH:-/data/adb/modules/AdGuardHome}/disable" ] && exit 0
+
+  if [ -f "$PID_FILE" ] && ps | grep -w "$(cat "$PID_FILE")" | grep -q "AdGuardHome"; then
+    # The resolver being up does not prove the hijack survived. If the watcher
+    # missed a "disable" (or another tool flushed the chain) every query leaks
+    # straight to the network while the module still looks perfectly healthy.
+    if [ "$enable_iptables" = true ] && ! "$SCRIPT_DIR/iptables.sh" check >/dev/null 2>&1; then
+      log "DNS hijack is missing, re-applying iptables rules" "DNS 劫持缺失，正在重新应用 iptables 规则"
+      "$SCRIPT_DIR/iptables.sh" enable
+    fi
+    exit 0
+  fi
+
+  start_adguardhome
 }
 
 case "$1" in
@@ -135,8 +167,11 @@ stop)
 toggle)
   toggle_adguardhome
   ;;
+ensure)
+  ensure_adguardhome
+  ;;
 *)
-  echo "Usage: $0 {start|stop|toggle}"
+  echo "Usage: $0 {start|stop|toggle|ensure}"
   exit 1
   ;;
 esac

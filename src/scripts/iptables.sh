@@ -25,20 +25,38 @@ check_ipv6_nat_support() {
   fi
 }
 
+chain_is_complete() {
+  # A chain can exist and still be useless: it may have been flushed by another
+  # tool, or left half-built by a run that failed midway. "the chain exists" is
+  # not proof that port 53 is redirected, so verify the rules themselves.
+  local iptables_cmd=$1
+  local chain_name=$2
+
+  $iptables_cmd -t nat -C $chain_name -m owner --uid-owner $adg_user --gid-owner $adg_group -j RETURN >/dev/null 2>&1 || return 1
+  $iptables_cmd -t nat -C $chain_name -p udp --dport 53 -j REDIRECT --to-ports $redir_port >/dev/null 2>&1 || return 1
+  $iptables_cmd -t nat -C $chain_name -p tcp --dport 53 -j REDIRECT --to-ports $redir_port >/dev/null 2>&1 || return 1
+  $iptables_cmd -t nat -C OUTPUT -j $chain_name >/dev/null 2>&1 || return 1
+
+  return 0
+}
+
 enable_iptables_chain() {
   local iptables_cmd=$1
   local chain_name=$2
 
-  if $iptables_cmd -t nat -L $chain_name >/dev/null 2>&1; then
+  if $iptables_cmd -t nat -L $chain_name >/dev/null 2>&1 && chain_is_complete "$iptables_cmd" "$chain_name"; then
     log "$chain_name chain already exists" "$chain_name 链已经存在"
-    if ! $iptables_cmd -t nat -C OUTPUT -j $chain_name >/dev/null 2>&1; then
-      $iptables_cmd -t nat -I OUTPUT -j $chain_name
-    fi
     return 0
   fi
 
-  log "Creating $chain_name chain and adding rules" "创建 $chain_name 链并添加规则"
-  $iptables_cmd -t nat -N $chain_name || return 1
+  if $iptables_cmd -t nat -L $chain_name >/dev/null 2>&1; then
+    log "Rebuilding incomplete $chain_name chain" "重建不完整的 $chain_name 链"
+    $iptables_cmd -t nat -F $chain_name >/dev/null 2>&1
+    $iptables_cmd -t nat -D OUTPUT -j $chain_name >/dev/null 2>&1
+  else
+    log "Creating $chain_name chain and adding rules" "创建 $chain_name 链并添加规则"
+    $iptables_cmd -t nat -N $chain_name || return 1
+  fi
   $iptables_cmd -t nat -A $chain_name -m owner --uid-owner $adg_user --gid-owner $adg_group -j RETURN || return 1
 
   for subnet in $ignore_dest_list; do
@@ -147,8 +165,19 @@ disable)
   del_block_ipv6_dns || exit 1
   disable_ipv6_iptables || exit 1
   ;;
+check)
+  # Exit 0 only when the DNS hijack is genuinely in place, so callers can tell
+  # "the rules are gone" apart from "the resolver is merely running".
+  chain_is_complete "$iptables_w" "ADGUARD_REDIRECT_DNS" || exit 1
+
+  if [ "$enable_iptables" = true ] && [ "$block_ipv6_dns" = true ]; then
+    $ip6tables_w -t filter -C OUTPUT -j ADGUARD_BLOCK_DNS >/dev/null 2>&1 || exit 1
+  fi
+
+  exit 0
+  ;;
 *)
-  echo "Usage: $0 {enable|disable}"
+  echo "Usage: $0 {enable|disable|check}"
   exit 1
   ;;
 esac
