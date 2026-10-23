@@ -408,9 +408,14 @@ function get_status()
     if bin_path then
         local ver = util.exec(bin_path .. " --version 2>&1")
         if ver then
-            local v = ver:match("version v?([%d%.]+)")
-            if not v then v = ver:match("([%d%.]+)") end
-            if v then status.version = "v" .. v end
+            -- 两种版本形态都要认：官方 "version v0.107.52"，定制内核按日期命名
+            -- "version v2026-09-27"（只有 "-" 没有 "."）。旧模式 [%d%.]+ 会在第一个 "-"
+            -- 处截断，于是显示成 "v2026"。这里只要版本 token 本身，允许字母数字、"."、"-"。
+            -- Both version shapes must parse: upstream "version v0.107.52" and a custom core
+            -- named by date "version v2026-09-27" (dashes, no dots). The old [%d%.]+ pattern
+            -- stopped at the first dash and reported "v2026"; take the whole token instead.
+            local v = ver:match("version%s+v?([%w%.%-]+)") or ver:match("(v?%d[%w%.%-]*)")
+            if v then status.version = "v" .. v:gsub("^v", "") end
         end
     end
 

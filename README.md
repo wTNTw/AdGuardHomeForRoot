@@ -3,7 +3,7 @@
 # AdGuardHome LuCI Dashboard
 
 **Standard AdGuard Home management panel for LuCI 2.0** | **LuCI 2.0 AdGuard Home Dashboard**
-**v2.8.0**
+**v2.9.1**
 
 A complete AdGuard Home management panel for OpenWrt / ImmortalWrt / iStoreOS.
 
@@ -386,6 +386,15 @@ Browser JS View  ──HTTP──▸  Lua Controller  ──exec──▸  Syste
 ## Changelog
 
 > Language: **English (default)** · [中文](README.zh-CN.md#变更记录--changelog) — user-facing docs are English by default; the zh-CN file is the translation companion.
+
+- **v2.9.1**
+  - **Compact card layout: the five blocks that each held one or two lines on a full-width row no longer do.** The live dashboard, service console, panel version, backup manager and AdGuardHome version were full-width `cbi-section`s with barely any content, so most of the page was whitespace (those five blocks alone took 1540 px of vertical space in the Argon theme on a 1366 px-wide screen). They are cards now: the dashboard on the left, the console and panel version stacked on the right (the two right-hand cards split the dashboard's height, so the row has no ragged edge), and the backup manager next to the AdGuardHome version card underneath. Below roughly 730 px the cards wrap to a single column, so nothing gets squeezed on phones or tablets. The proxy and log blocks moved below that group so the five blocks stay contiguous
+  - Implementation: `flex-wrap` + `flex-basis` instead of CSS Grid — bootstrap / material / argon each put their own margins on `.cbi-section` and `h3`, and flex items simply inherit that box model, so no theme class name is hard-coded. Spacing between buttons inside a card now comes from the container's `gap`, and the per-button `margin-right` is gone; version information became label/value chips that wrap instead of one long run-on line that overflowed narrow cards
+  - Fixed an old latent issue on the way: the current version shown in the dashboard table and in the AdGuardHome version card are now two nodes **refreshed together** (the version card used to render a static copy captured at page load, so it stayed stale after an in-panel core upgrade)
+  - **Fixed: `AdGuardHome 版本` showed `v2026` for custom cores.** The controller parsed the `--version` output with `[%d%.]+`, which stops at the first dash, so a core named by date (`AdGuard Home, version v2026-09-27`) was truncated to `v2026`. The version token is now matched as `[%w%.%-]+`, which accepts both `v0.107.52` and `v2026-09-27` (nightly/beta suffixes included); verified against six real-world strings
+  - The backup list scrolls inside its card past 210 px, so a dozen backups no longer stretch the whole page
+  - Measured with headless Chromium against the real render output: on the actual Argon theme (1366×1200) the view shrinks from 2017 px to 1586 px and those five blocks from 1540 px to 541 px, with the left and right columns exactly equal in height and zero horizontal overflow; at 1024 still two columns (500/430), at 820 a single column
+  - Version bumped to 2.9.1; no new i18n strings (existing ones reused); `checksums.sha256` regenerated
 
 - **v2.8.0**
   - **The view JS is now deployed under a version-named file (`dashboard_v2_8_0.js`), and `menu.d`'s view path is rewritten to match — upgrades and downgrades now take effect in the browser automatically, with no manual cache-disable step.** This is the root fix for the whole stale-view saga: until now every version was served from the same URL (`.../view/adguardhome/dashboard.js`), so whether the browser picked up the new file depended entirely on its HTTP cache state (heuristic freshness / conditional revalidation answered `304` by uhttpd, which sends no `Cache-Control`, on routers without a battery-backed RTC). Verified against the LuCI sources (openwrt-22.03): the view JS URL is built from `menu.d`'s `action.path` verbatim (dispatcher.lua:990 → view.htm → ui.js `instantiateView` → luci.js `require()`), so a unique path per version can never hit a stale cache entry — not even the very first upgrade from an older release. Filenames use underscores instead of dots because LuCI's `require()` replaces every `.` with `/`. The in-panel upgrade runner and `install.sh` both read the version from the (downloaded/packaged) `manifest.json`, rewrite `menu.d`, and remove superseded `dashboard*.js` files; `menu.d` joined the backup/restore file lists so a restore always brings back a paired JS + menu. `restore_backup` realigns `menu.d` after restoring legacy backups (which only carry the fixed-name `dashboard.js`), and restoring a pre-2.8.0 backup keeps working. The on-screen cache guide (`showCacheGuide`) stays as a safety net

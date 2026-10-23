@@ -3,7 +3,7 @@
 # AdGuardHome LuCI Dashboard
 
 **LuCI 2.0 标准 AdGuard Home 管理面板** | **LuCI 2.0 AdGuard Home Dashboard**
-**v2.8.0**
+**v2.9.1**
 
 为 OpenWrt / ImmortalWrt / iStoreOS 提供完整的 AdGuard Home 管理面板。
 
@@ -378,6 +378,15 @@ chmod 755 /opt/AdGuardHome/AdGuardHome
 ## 变更记录 / Changelog
 
 > 语言切换 / Language: **中文（当前）** · [English](README.md#changelog) —— 对外文档默认英文，本节为中文对照版。
+
+- **v2.9.1**
+  - **紧凑卡片布局：五个「只有一两行内容却各占一整行」的区块不再各行其是。** 实时仪表盘、服务控制台、面板版本、备份管理、AdGuardHome 版本此前都是整宽的 `cbi-section`，每块只有一两行，页面大部分是空白（Argon 主题、1366 px 宽屏幕下这五块纵向占用 1540 px）。现在改成卡片：左边实时仪表盘，右边服务控制台与面板版本上下叠放（两张右列卡片均分仪表盘高度，行内不会出现锯齿），下面备份管理与 AdGuardHome 版本并排。浏览器宽度不足约 730 px 时卡片自动回落成单列，手机、平板上不会挤压变形；网络代理与日志查看器移到该组之后，保证五个区块连成一片
+  - 实现方式：用 `flex-wrap` + `flex-basis` 而不是 CSS Grid——bootstrap / material / argon 各主题都给 `.cbi-section`、`h3` 自带外距，flex 子项直接沿用主题自己的盒模型，不硬编码任何主题类名。卡片内按钮的间距改由容器的 `gap` 统一提供，原先各按钮自带的 `margin-right` 全部去掉；版本信息由原来一长串行内文字改为「标签 + 值」的小徽章，窄了就换行而不是挤出容器
+  - 顺带修掉一处旧隐患：「核心版本」与「AdGuardHome 版本」卡片里的当前版本号现在是两个**同时刷新**的节点（此前版本卡片里是渲染时抓取的静态副本，面板内升级核心后它还停在旧值）
+  - **修复：定制内核在「AdGuardHome 版本」里只显示 `v2026`。** 控制器解析 `--version` 输出用的是 `[%d%.]+`，遇到第一个 `-` 就停，于是按日期命名的 `AdGuard Home, version v2026-09-27` 被截成 `v2026`。现在版本 token 按 `[%w%.%-]+` 匹配，`v0.107.52` 与 `v2026-09-27`（含 nightly / beta 后缀）都能完整识别，已用 6 组真实版本串验证
+  - 备份列表超过 210 px 后改为卡片内滚动，十几条备份不会再把整页拉长
+  - 用无头 Chromium 对真实 render 输出实测：在真实 Argon 主题下（1366×1200）视图高度 2017 px → 1586 px，上述五块从 1540 px 压缩到 541 px，左右两列高度完全相等、横向溢出为 0；1024 宽仍是两列（500/430），820 宽回落单列
+  - 版本号升至 2.9.1；未新增 i18n 文案（全部复用既有词条）；`checksums.sha256` 已重算
 
 - **v2.8.0**
   - **视图 JS 改为按版本命名部署（`dashboard_v2_8_0.js`），并同步改写 `menu.d` 的视图路径——升级与降级后浏览器自动加载新版本，不再需要手动禁用缓存。** 这是整条「旧视图」战线的根治方案：此前所有版本都从同一个 URL（`.../view/adguardhome/dashboard.js`）提供，浏览器能否拿到新文件完全取决于其 HTTP 缓存状态（启发式新鲜期内不发请求 / 条件重验证被 uhttpd 回 `304`——uhttpd 不发 `Cache-Control`，无电池 RTC 的路由器时钟回跳后更甚）。已对照 LuCI 源码逐行核实（openwrt-22.03）：视图 JS 的 URL 由 `menu.d` 的 `action.path` 原样决定（dispatcher.lua:990 → view.htm → ui.js `instantiateView` → luci.js `require()`），因此每个版本一条唯一 URL，浏览器不可能命中旧缓存条目——包括从旧版本的第一次升级。文件名用下划线而非点号，因为 LuCI 的 `require()` 会把 `.` 全部替换成 `/`。面板升级 runner 与 `install.sh` 都从（下载的/包内的）`manifest.json` 读取版本号、改写 `menu.d` 并清理被取代的 `dashboard*.js`；`menu.d` 加入备份/恢复清单，恢复时 JS 与 menu 永远成对。`restore_backup` 在恢复旧格式备份（只含固定名 `dashboard.js`）后自动对齐 `menu.d`，恢复 v2.8.0 之前的备份依旧可用。面板内的缓存引导框（showCacheGuide）保留作为兜底

@@ -7,7 +7,7 @@
  * 用于「防旧视图」自修复：若服务端版本与此不一致，说明浏览器在跑缓存的旧 JS，自动清缓存硬重载。
  * Version of THIS view JS (keep in sync with the release version / manifest.json when bumping).
  * Drives the anti-stale-view self-heal: a server version mismatch means a cached old JS is running. */
-var DASHBOARD_VIEW_VERSION = "2.8.0";
+var DASHBOARD_VIEW_VERSION = "2.9.1";
 /* 本视图 JS 的部署路径（自修复时用于绕过 HTTP 缓存重新拉取自己）
  * Deployed path of this view JS (used by the self-heal to re-fetch itself past the HTTP cache). */
 
@@ -696,6 +696,12 @@ return view.extend({
 
         var versionCode = E('code', {}, versionStr);
         this.versionEl = versionCode;
+        /* 「AdGuardHome 版本」卡片里也要显示当前版本，但一个 DOM 节点不能同时挂在两处，
+         * 所以复制一份，updateStatusUI() 里一起刷新，避免两处版本显示不一致。
+         * The version card needs its own copy: one DOM node cannot live in two places, so keep a
+         * twin element and refresh both in updateStatusUI() to keep the two displays in sync. */
+        var versionCodeCard = E('code', {}, versionStr);
+        this.versionElCard = versionCodeCard;
 
         var runningSpan = E('span', {
             style: isRunning ? 'color:#2dca73;font-weight:bold' : 'color:#e74c3c;font-weight:bold'
@@ -711,26 +717,24 @@ return view.extend({
         );
         this.urlEl = urlContainer;
 
-        var latestVersionCode = E('code', { style: 'margin-right:20px' }, T('未检查'));
+        var latestVersionCode = E('code', {}, T('未检查'));
         this.latestVersionEl = latestVersionCode;
 
         var checkUpdateBtn = E('button', {
             class: 'btn cbi-button cbi-button-action',
-            style: 'margin-right:10px',
             click: function() { self.checkUpdate(); }
         }, T('检查 AdGuardHome 更新'));
         this.checkUpdateBtn = checkUpdateBtn;
 
         var upgradeBtn = E('button', {
             class: 'btn cbi-button cbi-button-apply',
-            style: 'display:none;margin-right:10px',
+            style: 'display:none',
             click: function() { self.doUpgrade(false); }
         }, T('升级 AdGuardHome'));
         this.upgradeBtn = upgradeBtn;
 
         var forceBtn = E('button', {
             class: 'btn cbi-button cbi-button-reset',
-            style: 'margin-right:10px',
             click: function() { self.doUpgrade(true); }
         }, T('强制重装核心'));
         this.forceBtn = forceBtn;
@@ -913,22 +917,24 @@ return view.extend({
         proxyContainer.appendChild(proxyRestoreBtn);
 
         /* ── Panel self-upgrade UI ── */
+        /* 版本号在卡片里是「标签 + 值」的徽章，横向间距交给父级 flex 的 gap，自身不再留右边距。
+         * The versions are label/value chips in the card: horizontal spacing now comes from the
+         * parent's flex gap, so the codes carry no margin-right of their own. */
         var dashCurrVer = status.dashboard_version || T('未知');
-        var dashCurrCode = E('code', { style: 'margin-right:20px' }, dashCurrVer);
+        var dashCurrCode = E('code', {}, dashCurrVer);
         this.dashCurrVerEl = dashCurrCode;
-        var dashLatestCode = E('code', { style: 'margin-right:20px' }, T('未检查'));
+        var dashLatestCode = E('code', {}, T('未检查'));
         this.dashLatestVerEl = dashLatestCode;
 
         var dashCheckBtn = E('button', {
             class: 'btn cbi-button cbi-button-action',
-            style: 'margin-right:10px',
             click: function() { self.checkDashboardUpdate(); }
         }, T('检查面板更新'));
         this.dashCheckBtn = dashCheckBtn;
 
         var dashUpgradeBtn = E('button', {
             class: 'btn cbi-button cbi-button-apply',
-            style: 'display:none;margin-right:10px',
+            style: 'display:none',
             click: function() { self.doDashboardUpgrade(); }
         }, T('升级面板'));
         this.dashUpgradeBtn = dashUpgradeBtn;
@@ -956,7 +962,6 @@ return view.extend({
          * conditional warning would be invisible to exactly the people who need it. */
         var dashReloadBtn = E('button', {
             class: 'btn cbi-button',
-            style: 'margin-right:10px',
             click: function() {
                 /* 网页无法自行关闭浏览器的 HTTP 缓存（已核实），所以不再尝试任何自动刷新：
                  * 直接弹出「手动禁用缓存」的操作引导。
@@ -988,22 +993,22 @@ return view.extend({
 
         var refreshLogBtn = E('button', {
             class: 'btn cbi-button cbi-button-action',
-            style: 'margin-bottom:10px',
             click: function() { self.refreshLog(); }
         }, T('刷新日志'));
 
         var clearLogBtn = E('button', {
             class: 'btn cbi-button cbi-button-neutral',
-            style: 'margin:0 0 10px 8px',
             click: function() { self.clearLog(); }
         }, T('清空日志'));
 
-        var autoRefreshLogLabel = E('label', { style: 'margin:0 0 10px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px' }, [
+        var autoRefreshLogLabel = E('label', { style: 'font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;margin:0' }, [
             E('input', { type: 'checkbox', click: function(ev) { self.toggleAutoRefreshLog(ev.target.checked); } }),
             T('自动刷新')
         ]);
 
-        var backupsListEl = E('div', { style: 'font-size:12px;line-height:1.6;' }, T('点击「刷新备份」加载列表'));
+        /* 备份列表超过一屏就自己滚动，避免十几条备份把整页撑长。
+         * Scroll the backup list once it outgrows the card instead of stretching the page. */
+        var backupsListEl = E('div', { style: 'font-size:12px;line-height:1.6;max-height:210px;overflow-y:auto' }, T('点击「刷新备份」加载列表'));
         this.backupsListEl = backupsListEl;
 
         var refreshBackupsBtn = E('button', {
@@ -1011,139 +1016,182 @@ return view.extend({
             click: function() { self.fetchBackups(); }
         }, T('刷新备份'));
 
+        /* ── 卡片式紧凑布局 / Compact card layout ──
+         * 以前每个功能区都是一整行 cbi-section，内容却只有一两行，页面被拉得又长又散。
+         * 现在一个功能区一张卡片：宽度够就左右并排，窄屏 / 手机自动回落成单列。
+         * 用 flex-wrap 而不是 CSS Grid —— 各主题（bootstrap / material / argon）都给
+         * .cbi-section、h3 自带外距，flex 直接沿用主题自己的盒模型，不依赖任何主题类名。
+         * Each block used to be a full-width section holding one or two lines, which made the
+         * page needlessly long and sparse. Now one card per block: side by side while there is
+         * room, a single column on phones. flex-wrap (not grid) so every LuCI theme's own
+         * .cbi-section / h3 spacing keeps working without depending on theme class names. */
+        var CARD_BASIS = '350px';
+        function card(title, children, grow, noPanel) {
+            var bodyStyle = 'flex:1 1 auto; box-sizing:border-box; border-radius:4px;';
+            if (!noPanel) {
+                bodyStyle += ' padding:12px 14px; background:' + theme.panelBg +
+                             '; border:1px solid ' + theme.panelBorder;
+            }
+            return E('div', {
+                class: 'cbi-section',
+                style: 'flex:' + (grow || ('1 1 ' + CARD_BASIS)) + '; min-width:0; margin:0; display:flex; flex-direction:column'
+            }, [
+                E('h3', { style: 'margin-top:0' }, title),
+                E('div', { style: bodyStyle }, children)
+            ]);
+        }
+        function cardRow(children) {
+            return E('div', {
+                style: 'display:flex; flex-wrap:wrap; gap:14px; align-items:stretch; margin:0 0 18px'
+            }, children);
+        }
+        /* 一列里摞两张卡片（用来把服务控制台 / 面板版本放到仪表盘右侧）。
+         * Two cards stacked in one column (puts the console + panel cards beside the dashboard). */
+        function cardCol(children) {
+            return E('div', {
+                style: 'flex:1 1 ' + CARD_BASIS + '; min-width:0; display:flex; flex-direction:column; gap:14px'
+            }, children);
+        }
+        /* 标签 + 值的小徽章行：一行能塞几个就塞几个，窄了自动换行（替代原先的长串行内文字）。
+         * Label/value chips: as many per line as fit, wrapping when narrow (replaces the long
+         * single-line string of labels that used to overflow on narrow screens). */
+        function chipRow(items) {
+            return E('div', {
+                style: 'display:flex; flex-wrap:wrap; gap:2px 16px; align-items:baseline; margin-bottom:10px'
+            }, items.map(function (it) {
+                return E('span', { style: 'white-space:nowrap' }, [
+                    E('span', { style: 'font-size:12px;color:' + theme.mutedColor }, it[0]), ' ',
+                    it[1]
+                ]);
+            }));
+        }
+        /* 按钮行：间距交给 gap，按钮自身不再各自带 margin-right。
+         * Button row: spacing comes from gap, buttons carry no margin-right of their own. */
+        function btnRow(nodes, extra) {
+            return E('div', {
+                style: 'display:flex; flex-wrap:wrap; gap:8px; align-items:center' + (extra ? ';' + extra : '')
+            }, nodes);
+        }
+
         var node = E('div', { class: 'cbi-map' }, [
             E('h2', {}, T('AdGuard Home 控制中心')),
             E('div', { class: 'cbi-map-descr' }, T('实时状态监控 · 服务控制 · 日志查看 · 一键升级')),
 
-            E('div', { class: 'cbi-section' }, [
-                E('h3', {}, T('实时仪表盘')),
-                E('table', { class: 'table cbi-section-table', style: 'width:100%; max-width:650px;' }, [
-                    E('tr', { class: 'tr' }, [
-                        E('td', { class: 'td', style: 'width:32%;font-weight:bold' }, T('核心部署')),
-                        E('td', { class: 'td' }, isBinInstalled
-                            ? E('span', { style: 'color:#2dca73;font-weight:bold' }, T('✔ 已下载') + ' (' + (status.bin_path || '/opt/AdGuardHome/AdGuardHome') + ')')
-                            : E('span', {}, [
-                                E('span', { style: 'color:#e74c3c;font-weight:bold' }, T('✖ 未安装')),
-                                '  ',
-                                E('button', {
-                                    class: 'btn cbi-button cbi-button-apply',
-                                    style: 'margin-left:8px',
-                                    click: function() { self.doInstallCore(); }
-                                }, T('下载安装'))
-                            ])
-                        )
-                    ]),
-                    E('tr', { class: 'tr' }, [
-                        E('td', { class: 'td', style: 'font-weight:bold' }, T('核心版本')),
-                        E('td', { class: 'td' }, [versionCode])
-                    ]),
-                    E('tr', { class: 'tr' }, [
-                        E('td', { class: 'td', style: 'font-weight:bold' }, T('服务状态')),
-                        E('td', { class: 'td' }, isServiceInstalled
-                            ? E('span', { style: 'color:#2dca73' }, T('✔ 已安装系统服务 | ✔ 开机自启已注册'))
-                            : E('span', {}, [
-                                E('span', { style: 'color:#f39c12;font-weight:bold' }, T('⚠️ 未注册服务')),
-                                '  ',
-                                E('button', {
-                                    class: 'btn cbi-button cbi-button-apply',
-                                    style: 'margin-left:8px;background-color:#9b59b6;color:#fff!important;text-shadow:0 -1px 0 rgba(0,0,0,0.3);font-weight:bold',
-                                    click: function() { self.execAction('install_service'); }
-                                }, T('注册系统服务'))
-                            ])
-                        )
-                    ]),
-                    E('tr', { class: 'tr' }, [
-                        E('td', { class: 'td', style: 'font-weight:bold' }, T('运行状态')),
-                        E('td', { class: 'td' }, [runningSpan])
-                    ]),
-                    E('tr', { class: 'tr' }, [
-                        E('td', { class: 'td', style: 'font-weight:bold' }, T('Web 端口')),
-                        E('td', { class: 'td' }, [portSpan])
-                    ]),
-                    E('tr', { class: 'tr' }, [
-                        E('td', { class: 'td', style: 'font-weight:bold' }, T('管理入口')),
-                        E('td', { class: 'td' }, [urlContainer])
+            /* 左：实时仪表盘（最宽）；右：服务控制台 + 面板版本，两张卡片摞起来正好填满左列高度。
+             * Left: the dashboard (widest); right: console + panel version stacked to fill that height. */
+            cardRow([
+                card(T('实时仪表盘'), [
+                    E('table', { class: 'table cbi-section-table', style: 'width:100%' }, [
+                        E('tr', { class: 'tr' }, [
+                            E('td', { class: 'td', style: 'width:32%;font-weight:bold' }, T('核心部署')),
+                            E('td', { class: 'td' }, isBinInstalled
+                                ? E('span', { style: 'color:#2dca73;font-weight:bold' }, T('✔ 已下载') + ' (' + (status.bin_path || '/opt/AdGuardHome/AdGuardHome') + ')')
+                                : E('span', {}, [
+                                    E('span', { style: 'color:#e74c3c;font-weight:bold' }, T('✖ 未安装')),
+                                    '  ',
+                                    E('button', {
+                                        class: 'btn cbi-button cbi-button-apply',
+                                        style: 'margin-left:8px',
+                                        click: function() { self.doInstallCore(); }
+                                    }, T('下载安装'))
+                                ])
+                            )
+                        ]),
+                        E('tr', { class: 'tr' }, [
+                            E('td', { class: 'td', style: 'font-weight:bold' }, T('核心版本')),
+                            E('td', { class: 'td' }, [versionCode])
+                        ]),
+                        E('tr', { class: 'tr' }, [
+                            E('td', { class: 'td', style: 'font-weight:bold' }, T('服务状态')),
+                            E('td', { class: 'td' }, isServiceInstalled
+                                ? E('span', { style: 'color:#2dca73' }, T('✔ 已安装系统服务 | ✔ 开机自启已注册'))
+                                : E('span', {}, [
+                                    E('span', { style: 'color:#f39c12;font-weight:bold' }, T('⚠️ 未注册服务')),
+                                    '  ',
+                                    E('button', {
+                                        class: 'btn cbi-button cbi-button-apply',
+                                        style: 'margin-left:8px;background-color:#9b59b6;color:#fff!important;text-shadow:0 -1px 0 rgba(0,0,0,0.3);font-weight:bold',
+                                        click: function() { self.execAction('install_service'); }
+                                    }, T('注册系统服务'))
+                                ])
+                            )
+                        ]),
+                        E('tr', { class: 'tr' }, [
+                            E('td', { class: 'td', style: 'font-weight:bold' }, T('运行状态')),
+                            E('td', { class: 'td' }, [runningSpan])
+                        ]),
+                        E('tr', { class: 'tr' }, [
+                            E('td', { class: 'td', style: 'font-weight:bold' }, T('Web 端口')),
+                            E('td', { class: 'td' }, [portSpan])
+                        ]),
+                        E('tr', { class: 'tr' }, [
+                            E('td', { class: 'td', style: 'font-weight:bold' }, T('管理入口')),
+                            E('td', { class: 'td' }, [urlContainer])
+                        ])
                     ])
+                ], '1 1 420px'),
+
+                /* 右列两张卡片：控制与面板各占一半高度，正好和左边的仪表盘等高。 */
+                cardCol([
+                    card(T('服务控制台'), [
+                        E('div', { style: 'margin-bottom:10px;font-size:13px' }, [
+                            E('strong', {}, T('当前控制模式：')),
+                            E('span', { style: isServiceInstalled ? 'color:#2dca73;font-weight:bold' : 'color:#f39c12;font-weight:bold' },
+                                isServiceInstalled ? T('Init.d 系统服务级调用') : T('AdGuardHome 二进制直接控制（命令保底）'))
+                        ]),
+                        btnRow([
+                            E('button', { class: 'btn cbi-button cbi-button-apply', click: function() { self.execAction('start'); } }, T('启动服务')),
+                            E('button', { class: 'btn cbi-button cbi-button-action', click: function() { self.execAction('restart'); } }, T('重启服务')),
+                            E('button', { class: 'btn cbi-button cbi-button-reset', click: function() { self.execAction('stop'); } }, T('停止服务')),
+                            isServiceInstalled ? '' : E('button', { class: 'btn cbi-button cbi-button-apply', style: 'background-color:#9b59b6;color:#ffffff!important; text-shadow:0 -1px 0 rgba(0,0,0,0.3); font-weight:bold', click: function() { self.execAction('install_service'); } }, T('注册系统服务'))
+                        ])
+                    ], '1 1 0'),
+
+                    card(T('面板版本'), [
+                        chipRow([
+                            [T('当前面板版本：'), dashCurrCode],
+                            [T('面板最新版本：'), dashLatestCode],
+                            [T('浏览器已加载：'), dashLoadedCode]
+                        ]),
+                        btnRow([dashCheckBtn, dashUpgradeBtn, dashReloadBtn])
+                    ], '1 1 0')
                 ])
             ]),
 
-            E('div', { class: 'cbi-section' }, [
-                E('h3', {}, T('服务控制台')),
-                E('div', { style: 'padding:15px; background:' + theme.panelBg + '; border:1px solid ' + theme.panelBorder + '; border-radius:4px' }, [
-                    E('div', { style: 'margin-bottom:12px;' }, [
-                        E('strong', {}, T('当前控制模式：')),
-                        E('span', { style: isServiceInstalled ? 'color:#2dca73;font-weight:bold' : 'color:#f39c12;font-weight:bold' },
-                            isServiceInstalled ? T('Init.d 系统服务级调用') : T('AdGuardHome 二进制直接控制（命令保底）'))
-                    ]),
-                    E('button', { class: 'btn cbi-button cbi-button-apply', style: 'margin-right:10px', click: function() { self.execAction('start'); } }, T('启动服务')),
-                    E('button', { class: 'btn cbi-button cbi-button-action', style: 'margin-right:10px', click: function() { self.execAction('restart'); } }, T('重启服务')),
-                    E('button', { class: 'btn cbi-button cbi-button-reset', style: 'margin-right:10px', click: function() { self.execAction('stop'); } }, T('停止服务')),
-                    isServiceInstalled ? '' : E('button', { class: 'btn cbi-button cbi-button-apply', style: 'background-color:#9b59b6;color:#ffffff!important; text-shadow:0 -1px 0 rgba(0,0,0,0.3); font-weight:bold', click: function() { self.execAction('install_service'); } }, T('注册系统服务'))
-                ])
-            ]),
-
-            E('div', { class: 'cbi-section' }, [
-                E('h3', {}, T('网络代理')),
-                proxyContainer
-            ]),
-
-            E('div', { class: 'cbi-section' }, [
-                E('h3', {}, T('面板版本')),
-                E('div', { style: 'padding:15px; background:' + theme.panelBg + '; border:1px solid ' + theme.panelBorder + '; border-radius:4px' }, [
-                    E('div', { style: 'margin-bottom:12px;' }, [
-                        E('strong', {}, T('当前面板版本：')),
-                        dashCurrCode,
-                        E('strong', {}, T('面板最新版本：')),
-                        dashLatestCode,
-                        E('strong', {}, T('浏览器已加载：')),
-                        dashLoadedCode
-                    ]),
-                    dashCheckBtn,
-                    dashUpgradeBtn,
-                    dashReloadBtn
-                ])
-            ]),
-
-            E('div', { class: 'cbi-section' }, [
-                E('h3', {}, T('备份管理')),
-                E('div', { style: 'padding:15px; background:' + theme.panelBg + '; border:1px solid ' + theme.panelBorder + '; border-radius:4px' }, [
-                    E('div', { style: 'margin-bottom:12px;' }, [
+            /* 备份列表通常只有几行，和版本区并排；两边都短，不再各自占一整行。 */
+            cardRow([
+                card(T('备份管理'), [
+                    btnRow([
                         refreshBackupsBtn,
-                        E('span', { style: 'margin-left:10px; font-size:11px; color:' + theme.mutedColor }, T('列出 /root/agh_backup_* 备份目录，可恢复或删除'))
-                    ]),
+                        E('span', { style: 'font-size:11px; color:' + theme.mutedColor }, T('列出 /root/agh_backup_* 备份目录，可恢复或删除'))
+                    ], 'margin-bottom:10px'),
                     backupsListEl
-                ])
-            ]),
+                ], '1 1 420px'),
 
-            E('div', { class: 'cbi-section' }, [
-                E('h3', {}, T('AdGuardHome 版本')),
-                E('div', { style: 'padding:15px; background:' + theme.panelBg + '; border:1px solid ' + theme.panelBorder + '; border-radius:4px' }, [
-                    E('div', { style: 'margin-bottom:12px;' }, [
-                        E('strong', {}, T('当前 AdGuardHome 版本：')),
-                        E('code', { style: 'margin-right:20px' }, versionStr),
-                        E('strong', {}, T('AdGuardHome 最新版本：')),
-                        latestVersionCode
+                card(T('AdGuardHome 版本'), [
+                    chipRow([
+                        [T('当前 AdGuardHome 版本：'), versionCodeCard],
+                        [T('AdGuardHome 最新版本：'), latestVersionCode]
                     ]),
-                    checkUpdateBtn,
-                    upgradeBtn,
-                    forceBtn,
+                    btnRow([checkUpdateBtn, upgradeBtn, forceBtn]),
                     E('div', { style: 'margin-top:10px;font-size:11px;color:' + theme.mutedColor }, T('仅支持稳定版（stable）渠道升级；不会切换到 beta/edge 渠道。'))
                 ])
             ]),
 
-            E('div', { class: 'cbi-section' }, [
-                E('h3', {}, T('日志查看器')),
-                E('div', { style: 'padding:15px; background:' + theme.panelBg + '; border:1px solid ' + theme.panelBorder + '; border-radius:4px' }, [
-                    refreshLogBtn,
-                    clearLogBtn,
-                    autoRefreshLogLabel,
+            cardRow([
+                card(T('网络代理'), [proxyContainer], '1 1 100%', true)
+            ]),
+
+            cardRow([
+                card(T('日志查看器'), [
+                    btnRow([refreshLogBtn, clearLogBtn, autoRefreshLogLabel], 'margin-bottom:6px'),
                     E('div', { style: secStyle }, T('AdGuardHome 状态')),
                     statusPre,
                     E('div', { style: secStyle }, T('执行 / 升级日志')),
                     execPre,
                     E('div', { style: secStyle }, T('系统 / 运行日志')),
                     sysPre
-                ])
+                ], '1 1 100%')
             ])
         ]);
 
@@ -1177,6 +1225,9 @@ return view.extend({
 
         if (this.versionEl) {
             this.versionEl.textContent = versionStr;
+        }
+        if (this.versionElCard) {
+            this.versionElCard.textContent = versionStr;
         }
 
         if (this.runningEl) {
