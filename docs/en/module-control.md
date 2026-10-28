@@ -37,3 +37,13 @@ You can also call the helper script from a shell:
 The module has two parts: AdGuardHome itself, which runs a local DNS server with customizable filtering (listening on `127.0.0.1:5591` by default), and the iptables redirect rules, which send DNS queries addressed to port 53 (UDP/TCP) to AdGuardHome.
 
 After boot the module waits for the boot animation to finish, starts AdGuardHome, and applies the iptables rules only once the DNS listener is up, so the device does not lose DNS while the core is still initializing.
+
+## SNI filtering (adapted to the running core)
+
+Every time it applies rules, the module reads the `sni_filter` section of `AdGuardHome.yaml` to work out whether the running core supports SNI filtering. No extra configuration is needed:
+
+- Core supports it (`sni_filter` is present and the core really holds the matching NFQUEUE queue): the module attaches `AGH_SNI` / `AGH_SNI6` chains for each port in `ports` and sends the first bytes of every new TLS connection to the queue, where the core drops the connection. If the kernel lacks `connbytes` / `NFQUEUE`, the step is skipped.
+- Core does not support it (official AdGuardHome, no `sni_filter` in the YAML): only the DNS redirect is installed and one "skipping SNI hijack" line is logged. Nothing fails.
+- If the SNI rules are wiped by something else (`iptables -F` from another module, switching VPN apps, …), the watchdog notices the missing rules and rebuilds them.
+
+`check` verifies the SNI chains only while the core actually holds the queue, so running a core without this feature cannot send the watchdog into a needless rebuild loop.

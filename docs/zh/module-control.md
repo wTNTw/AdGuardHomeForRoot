@@ -37,3 +37,13 @@ rm /data/adb/modules/AdGuardHome/disable
 本模块可以分为两部分：一部分是 AdGuardHome 本身，它在本地搭建了一个可自定义拦截功能的 DNS 服务器（默认监听 `127.0.0.1:5591`）；另一部分是 iptables 转发规则，它负责将发往本机 53 端口的 DNS 查询（UDP/TCP）重定向到 AdGuardHome 处理。
 
 开机后模块会等待系统启动动画结束，再启动 AdGuardHome；确认 DNS 监听就绪后才会应用 iptables 规则，避免在核心尚未就绪时劫持 53 端口导致设备短时间内无法联网。
+
+## SNI 过滤（自动适配核心）
+
+模块会在每次应用规则时读取 `AdGuardHome.yaml` 中的 `sni_filter` 段来判断当前运行的核心是否支持 SNI 过滤，无需任何额外配置：
+
+- 核心支持（配置里有 `sni_filter`，且它确实已绑定对应的 NFQUEUE 队列）：模块会为 `ports` 中每个端口挂上 `AGH_SNI`/`AGH_SNI6` 链，把新建 TLS 连接的前若干字节送进队列，由核心完成拦截；协议不支持 `connbytes`/`NFQUEUE` 时自动跳过。
+- 核心不支持（官方版 AdGuardHome，YAML 里没有 `sni_filter`）：模块只做 DNS 劫持，日志里记一行“跳过 SNI 劫持”，不会报错。
+- SNI 规则被外部清空（例如其他模块执行 `iptables -F`、VPN 应用切换）时，守护进程会发现规则缺失并按原样重建。
+
+`check` 只在核心确实占用了队列时才校验 SNI 链，因此换成不支持该特性的核心不会触发无意义的重建循环。
