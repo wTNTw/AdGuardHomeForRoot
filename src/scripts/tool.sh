@@ -17,7 +17,7 @@ move_to_system_cgroup() {
 # the "disable" marker the root managers write.
 STOP_FILE="$AGH_DIR/.stopped"
 
-# Serialise the state changes. Four entry points can ask for start/stop at
+# Serialise the state changes. Four entry points can ask for start/stop/reload at
 # the same moment -- the WebUI buttons, action.sh, the inotify watcher and the
 # watchdog -- and a start holds this for up to startup_timeout seconds while it
 # waits for the DNS listener. Two starts used to race for the port: the loser
@@ -282,6 +282,35 @@ ensure_adguardhome() {
   start_adguardhome
 }
 
+reload_adguardhome() {
+  local pid
+  # WebUI "Save & Apply" entry point: re-apply the netfilter state from the newly
+  # saved settings.conf without touching the resolver process. Before this
+  # existed the button only rewrote the file, so a changed port/user/IPv6 mode
+  # had no effect until the module was restarted by hand.
+  pid=$(find_agh_pid)
+  [ -n "$pid" ] || exit 0
+
+  # Tear down first: flipping block_ipv6_dns between "block" and "hijack" would
+  # otherwise leave the other mode's chain in place, and both would answer for
+  # port 53.
+  "$SCRIPT_DIR/iptables.sh" disable
+
+  if [ "$enable_iptables" = true ]; then
+    if "$SCRIPT_DIR/iptables.sh" enable; then
+      log "🟢 Configuration reloaded [PID: $pid] (iptables: enabled)" "🟢 配置已重新应用 [PID: $pid] (iptables: 已启用)"
+      update_description "🟢 Running [PID: $pid] (iptables: ON)" "🟢 运行中 [PID: $pid] (iptables: 开启)"
+    else
+      log "😭 Error occurred applying iptables" "😭 应用 iptables 规则时出错"
+      update_description "🔴 Error applying iptables" "🔴 应用 iptables 出错"
+      exit 1
+    fi
+  else
+    log "🟢 Configuration reloaded [PID: $pid] (iptables: disabled)" "🟢 配置已重新应用 [PID: $pid] (iptables: 已禁用)"
+    update_description "🟢 Running [PID: $pid] (iptables: OFF)" "🟢 运行中 [PID: $pid] (iptables: 关闭)"
+  fi
+}
+
 case "$1" in
 start)
   acquire_lock
@@ -301,8 +330,12 @@ ensure)
   try_lock || exit 0
   ensure_adguardhome
   ;;
+reload)
+  acquire_lock 20
+  reload_adguardhome
+  ;;
 *)
-  echo "Usage: $0 {start|stop|toggle|ensure}"
+  echo "Usage: $0 {start|stop|toggle|ensure|reload}"
   exit 1
   ;;
 esac
