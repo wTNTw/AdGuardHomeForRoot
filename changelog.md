@@ -1,12 +1,22 @@
 # Changelog
 
-- 修复软重启后启停模块可能误杀系统进程的严重问题：瞬态 AdGuardHome 进程的 PID 会覆盖 agh.pid，该 PID 被复用到系统进程后，关闭模块会向它发送 SIGTERM（实测击中 system_server）导致设备重启 (#85)
-- Fix a critical bug where starting/stopping the module after a soft reboot could kill a system process: a transient AdGuardHome PID overwrote agh.pid, the PID was later reused by a system process, and stopping the module sent it SIGTERM (system_server in practice), rebooting the device (#85)
-- 进程身份改为按 /proc/<pid>/comm 校验：重入检测不再依赖 ps，软重启后直接接管仍在运行的核心；确认进程存活后才写入 PID；停止时只终止真正的 AdGuardHome 进程 (#85)
-- Identify processes by /proc/<pid>/comm: the re-entry check no longer relies on ps, a core that survived a soft reboot is adopted instead of respawned, the PID is written only after the process is confirmed, and stop only signals real AdGuardHome processes (#85)
-- 监听就绪检测先校验进程存活；service.sh 启动前清理残留的 inotifyd；修复 ksud 更新模块描述缺少 KSU_MODULE；安装器不再用 pkill -f 误杀自身 (#85)
-- Check process liveness before the DNS listener check, clean up stale inotifyd instances in service.sh, pass KSU_MODULE when updating the module description via ksud, and stop the installer's pkill -f from matching itself (#85)
-- 文档拆分为中文 / 英文两个目录，统一以 docs/index.md 作为双语索引
-- Split the docs into Chinese / English directories with docs/index.md as the shared bilingual index
-- CI 不再上传 Actions 产物，改由单个任务直接打包并发布，安装包统一从 Releases 获取
-- CI no longer uploads Actions artifacts; a single job builds and publishes directly, so install packages come only from Releases
+- 修复「停止核心」被看门狗撤销：手动停止现在会写入 `/data/adb/agh/.stopped` 标记，看门狗（`watchdog_interval`，默认 60 秒）不再把核心拉回来；点「启动核心」、重启设备或升级模块会清除该标记
+- Fix "Stop Core" being undone by the watchdog: a manual stop now writes a `/data/adb/agh/.stopped` marker and the watchdog (`watchdog_interval`, 60s by default) leaves the core down; "Start Core", a reboot or an upgrade clears it
+- 修复卸载后设备断网：卸载脚本先停核心、删除全部 iptables 规则、结束后台助手进程，再删除 `/data/adb/agh`；后台助手（inotify 监听与看门狗）增加了 SIGKILL 兜底——此前 `kill` 杀不掉阻塞在 `sleep` 里的看门狗，重复实例会一直堆积
+- Fix the device losing DNS after uninstalling: the uninstall script now stops the core, removes every iptables rule and terminates the background helpers before deleting `/data/adb/agh`; the helpers are also finished off with SIGKILL, because `kill` never reached a watchdog blocked in `sleep`, so duplicates kept piling up
+- 开机流程改用 `ensure`：软重启后仍在运行的核心会被直接接管，丢失的劫持规则在启动这一跳就补回，不再等第一次看门狗检查；启动前的助手进程清理也提前到状态修复之前
+- Boot now goes through `ensure`: a core that survived a userspace restart is adopted as it is, and a lost hijack is repaired in that same pass instead of waiting for the first watchdog tick; the helper sweep happens before the state repair
+- 修复 `iptables.sh check` 漏检 IPv6 劫持链（`block_ipv6_dns=false` 时）：看门狗此前对已被清空的 `ADGUARD_REDIRECT_DNS6` 视而不见，IPv6 解析会静默绕过 AdGuardHome
+- Fix `iptables.sh check` skipping the IPv6 hijack chain (with `block_ipv6_dns=false`): the watchdog used to look straight past a flushed `ADGUARD_REDIRECT_DNS6`, letting IPv6 resolution bypass AdGuardHome silently
+- `settings.conf` 缺键不再静默降级：升级保留的旧配置缺少 `enable_iptables`、`block_ipv6_dns`、`redir_port`、`adg_user`、`adg_group`、`timezone` 等键时按默认值处理（此前缺失 `timezone` 会让 `history.log` 记录 UTC 时间，缺失 `redir_port` 会让劫持永远等不到监听就绪）
+- A missing key in `settings.conf` no longer degrades silently: kept-from-old-version configs fall back to the documented defaults for `enable_iptables`, `block_ipv6_dns`, `redir_port`, `adg_user`, `adg_group`, `timezone` and friends (a missing `timezone` used to log `history.log` in UTC, a missing `redir_port` used to wait out the listener timeout on every boot)
+- 状态变更加锁：`start` / `stop` / `reload` 串行执行，`ensure` 遇到占用直接跳过；两个 `start` 并发时不再出现「失败的那个把成功者的 iptables 链拆掉」
+- State changes are serialised: `start` / `stop` / `reload` queue up and `ensure` skips its turn; two concurrent starts can no longer leave the loser tearing down the winner's iptables chain
+- 模块管理页：日志渲染先转义再高亮（日志内容来自第三方规则列表，而该页面持有 root 执行桥）；「保存并应用」现在真的重新应用规则、缺少的键会追加写入、端口与用户名校验后才落盘；切换界面语言不再清空已加载的日志；版本号只查询一次
+- Module web UI: log rendering escapes before highlighting (log lines come from third-party rule lists and this page holds a root exec bridge); "Save & apply" now re-applies the rules, appends keys missing from an old `settings.conf` and validates the port and user names before writing; switching the UI language no longer wipes the loaded log; the version string is fetched once
+- 安装器校验安装包架构：armv7 设备通过 root 管理器「更新」拿到 arm64 包时会直接报错并提示应下载的版本，而不是装完后核心无法执行
+- The installer validates the package architecture: an armv7 device that updates through the root manager gets a clear error naming the right download, instead of a module whose core cannot exec
+- 调试包补齐排查所需信息：`filter` 表（`ADGUARD_BLOCK_DNS`、`AGH_SNI`/`AGH_SNI6`）、NFQUEUE 监听者、模块标记文件（`disable`、`.stopped`），核心进程改为按 `/proc` 扫描；「本地打开日志」会把文件复制到 `/sdcard/Download` 再打开
+- The debug bundle now carries what the reports need: the `filter` table (`ADGUARD_BLOCK_DNS`, `AGH_SNI`/`AGH_SNI6`), the NFQUEUE listeners, the module markers (`disable`, `.stopped`) and a `/proc`-based resolver process list; "Open log locally" copies the file to `/sdcard/Download` first
+- 文档：补充 `watchdog_interval` 参数、手动停止语义、卸载与升级时的行为、架构校验说明；中文/英文同步
+- Docs: documented `watchdog_interval`, the manual-stop semantics, uninstall/upgrade behaviour and the architecture check, in both Chinese and English
