@@ -20,6 +20,7 @@
 │   ├── module.prop       # 模块信息
 │   └── META-INF/         # 安装器
 ├── docs/                 # 用户文档（index.md 为索引，zh/ 与 en/ 分别为中英文）
+├── tests/                # 离线测试（Web UI 行为、安装器架构校验、i18n / 版本一致性）
 ├── cache/                # 打包缓存与输出（已被 .gitignore 忽略）
 ├── pack.ps1              # Windows 打包脚本
 ├── pack.sh               # Linux / macOS / CI 打包脚本
@@ -53,13 +54,38 @@ Linux / macOS（需要 `curl` 或 `wget`、`tar`，以及 `zip`、`7z`/`7za`、`
 
 产物 ZIP 的结构与 `src/` 一致，AdGuardHome 二进制位于 `bin/AdGuardHome`。脚本具有缓存机制：如果 `cache` 目录中已存在 AdGuardHome 的缓存版本，则不会重复下载，从而节省时间和带宽。
 
+## 测试
+
+`tests/` 下的检查全部离线运行，不需要设备与网络：
+
+| 命令 | 覆盖内容 |
+| --- | --- |
+| `node tests/webui.test.js` | 用仿 DOM + 假 KSU 桥直接执行真实 `webroot/assets/index.js`：日志转义与高亮、语言切换不清空日志、保存命令的生成（缺键追加、元字符过滤、端口校验）、`tool.sh reload` 调用、元素 id 与 HTML 的交叉校验 |
+| `bash tests/arch.test.sh` | 从 `customize.sh` 原样抽出的架构校验函数：错架构安装包必须被拒，非 ELF 载荷不得误判 |
+| `python3 tests/check_i18n.py` | `en.json` / `zh.json` 键集合一致，且界面引用到的键都存在 |
+| `python3 tests/check_version.py` | `version.json` 与 `module.prop` 一致；在 tag 构建下还要求 tag 等于版本号 |
+
+`node tests/webui.test.js --print-cmd` 会把 Web UI 生成的保存命令打印出来，可直接 push 到设备上复现：
+
+```shell
+adb push save.sh /data/local/tmp/save.sh
+adb shell su -c 'sh /data/local/tmp/save.sh'
+```
+
 ## CI 与发版
+
+[`lint.yml`](../../.github/workflows/lint.yml) 在每个 push（`main`）、PR 与手动触发时运行：
+
+1. Shell 语法：全部 `*.sh` 走 `bash -n`，设备侧脚本（`src/`）额外走 `busybox sh -n`（设备实际用的是 busybox ash / mksh）
+2. 前端与数据文件：`node --check`、`*.json` 逐个解析
+3. 上面四个测试
 
 推送形如 `YYYYMMDD` 的 tag 会触发 [`pack.yml`](../../.github/workflows/pack.yml)，该 workflow 只负责发版：
 
 1. 校验 tag 必须为 8 位日期（`YYYYMMDD`）
-2. 调用 `pack.sh all` 打包两个架构
-3. 创建 GitHub Release，正文取自 `changelog.md`，附件为 `cache/` 下的两个 ZIP
+2. 校验 `version.json`、`module.prop`、tag 三者一致（不一致会让用户的更新检查永远收不到新版）
+3. 调用 `pack.sh all` 打包两个架构
+4. 创建 GitHub Release，正文取自 `changelog.md`，附件为 `cache/` 下的两个 ZIP
 
 workflow 也可手动触发，此时只验证打包、不产出可下载文件。Actions 页面不上传构建产物，可安装的模块包只从 Releases 获取，本地自测请用 `pack.sh`。
 

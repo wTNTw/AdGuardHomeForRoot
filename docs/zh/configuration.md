@@ -29,7 +29,7 @@
 
 ## 3. settings.conf 参数表
 
-模块配置文件为 `/data/adb/agh/settings.conf`，可直接编辑，也可以通过 [模块管理页](#2-模块管理页-web-ui) 图形化修改其中部分参数。修改后需要重启模块才会生效。
+模块配置文件为 `/data/adb/agh/settings.conf`，可直接编辑，也可以通过 [模块管理页](#2-模块管理页-web-ui) 图形化修改其中部分参数。在模块管理页修改并点“保存并应用”会立即重新应用 iptables 规则；手动编辑文件则需重启模块或执行 `tool.sh reload` 才会生效。
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -40,7 +40,10 @@
 | `adg_user` / `adg_group` | `root` / `net_raw` | 运行 AdGuardHome 的用户与用户组；iptables 规则会跳过该用户，避免 AdGuardHome 自身的查询被重定向 |
 | `ignore_dest_list` | 空 | 需要绕过 iptables 的**目的**地址列表（空格分隔），例如上游 DNS 服务器地址 |
 | `ignore_src_list` | 空 | 需要绕过 iptables 的**源**地址列表（空格分隔），例如代理应用 TUN 虚拟网卡的地址，详见 [常见问题](faq.md) |
-| `timezone` | `Asia/Shanghai` | 传给 AdGuardHome 的时区配置 |
+| `timezone` | `Asia/Shanghai` | 传给 AdGuardHome 的时区配置（同时影响 `history.log` 的时间戳） |
+| `watchdog_interval` | `60` | 看门狗检查间隔（秒），用于在 DNS 劫持意外丢失时自动恢复；设为 `0` 关闭看门狗 |
+
+> 升级时模块会保留旧的 `settings.conf`，因此新版本才加入的参数（例如 `startup_timeout`、`watchdog_interval`）可能在文件中不存在。缺失时脚本会使用上表的默认值，不必手动补齐。
 
 > 文件末尾的 `AGH_DIR`、`BIN_DIR`、`SCRIPT_DIR`、`PID_FILE`、`MOD_PATH` 为内部路径定义，请勿修改。
 

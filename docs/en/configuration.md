@@ -29,7 +29,7 @@ If you prefer a standalone app to manage the AdGuardHome core, try [AdGuard Home
 
 ## 3. settings.conf Reference
 
-The module configuration file is `/data/adb/agh/settings.conf`. You can edit it directly, or change some of the values graphically in the [module web UI](#2-module-web-ui). Restart the module for changes to take effect.
+The module configuration file is `/data/adb/agh/settings.conf`. You can edit it directly, or change some of the values graphically in the [module web UI](#2-module-web-ui). Saving in the web UI re-applies the iptables rules immediately; hand-editing the file needs a module restart or `tool.sh reload` to take effect.
 
 | Parameter | Default | Description |
 | --- | --- | --- |
@@ -40,7 +40,10 @@ The module configuration file is `/data/adb/agh/settings.conf`. You can edit it 
 | `adg_user` / `adg_group` | `root` / `net_raw` | User and group that AdGuardHome runs as; the iptables rules skip this user so AdGuardHome's own queries are not redirected |
 | `ignore_dest_list` | empty | **Destination** addresses to bypass (space separated), for example upstream DNS servers |
 | `ignore_src_list` | empty | **Source** addresses to bypass (space separated), for example a proxy app's TUN interface address, see [FAQ](faq.md) |
-| `timezone` | `Asia/Shanghai` | Timezone passed to AdGuardHome |
+| `timezone` | `Asia/Shanghai` | Timezone passed to AdGuardHome (also drives the `history.log` timestamps) |
+| `watchdog_interval` | `60` | Watchdog interval in seconds, used to repair a lost DNS hijack automatically; set to `0` to disable it |
+
+> Upgrades keep your existing `settings.conf`, so parameters added by a later version (for example `startup_timeout` or `watchdog_interval`) may be missing from it. The scripts fall back to the defaults above, so there is no need to add them by hand.
 
 > The `AGH_DIR`, `BIN_DIR`, `SCRIPT_DIR`, `PID_FILE` and `MOD_PATH` entries at the end of the file define internal paths; do not modify them.
 

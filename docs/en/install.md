@@ -6,6 +6,7 @@
 
 - A rooted device with [Magisk](https://github.com/topjohnwu/Magisk) / [KernelSU](https://github.com/tiann/KernelSU) / [APatch](https://github.com/bmax121/APatch) installed
 - Two builds are provided: arm64 and armv7. **arm64** is recommended: it performs better and is compatible with most modern devices
+- The installer verifies that the package can actually run on this device: a wrong-architecture zip is rejected with a message naming the build to download, instead of installing a module whose core cannot start
 
 ## Installation
 
@@ -27,7 +28,9 @@ Install the new zip over the existing module in your root manager. Because the m
 
 ## Uninstall
 
-Removing the module in your root manager deletes the `/data/adb/agh` directory, **including the AdGuardHome configuration, filter rules and all logs**. Back it up first if you want to keep them.
+When the module is removed in your root manager, the uninstall script first stops the core, removes every iptables rule and terminates the background helpers, and only then deletes the `/data/adb/agh` directory, **including the AdGuardHome configuration, filter rules and all logs**. Back it up first if you want to keep them.
+
+> Older versions only deleted the directory, so port `53` stayed redirected to a process that no longer existed and the device gradually lost DNS until the next reboot. No reboot is needed for that anymore.
 
 ## Ports
 

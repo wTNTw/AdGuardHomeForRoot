@@ -23,6 +23,10 @@
 - **模块管理页操作**：在“维护中心”点击“生成调试日志”，完成后点击“本地打开日志”即可直接查看。
 - **Shell 操作**：执行 `sh /data/adb/agh/scripts/debug.sh`，信息将汇总至 `/data/adb/agh/debug.log`。
 
+调试包已包含 `nat` 与 `filter` 两张表（`ADGUARD_BLOCK_DNS`、`AGH_SNI`/`AGH_SNI6` 都在 `filter` 里）、NFQUEUE 监听者（`/proc/net/netfilter/nfnetlink_queue`）、模块标记文件状态（`disable`、`.stopped`）以及按 `/proc` 扫描得到的核心进程列表，排查 IPv6 与 SNI 相关问题时优先看这几项。
+
+> “本地打开日志”会把 `/data/adb/agh/debug.log` 复制到 `/sdcard/Download/agh-debug.log` 再尝试打开，因为 `/data/adb` 是仅 root 可读的目录，文件管理器/编辑器无法直接读取。
+
 ## 常见状态标识
 
 状态显示在 root 管理器的模块描述中（中英文取决于系统语言）：
@@ -49,3 +53,9 @@
 2. 在 AdGuardHome 后台精简过滤规则，或更换可用的上游 DNS
 3. 如确属初始化较慢，可调大 `settings.conf` 中的 `startup_timeout`（参数含义见 [settings.conf 参数表](configuration.md#3-settingsconf-参数表)）
 4. 修改后重启模块使其重新应用 iptables
+
+## 停止后又自己运行
+
+这是预期行为之外的旧问题，已修复：看门狗（`watchdog_interval`，默认 60 秒）会在核心挂掉时自动拉起来，早期版本连用户手动“停止”也会一并撤销。现在手动停止会在 `/data/adb/agh/.stopped` 留下标记，看门狗看到就会保持“停止”状态；重启设备、升级模块或点击“启动核心”会清除该标记。
+
+如果你在 `debug.log` 的 Module Markers 一节看到该文件，说明模块正处于手动停止状态。

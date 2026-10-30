@@ -23,6 +23,10 @@ For tricky problems, use the maintenance tools:
 - **Web UI**: under "Maintenance" tap "Generate debug log", then "Open log locally".
 - **Shell**: run `sh /data/adb/agh/scripts/debug.sh`; everything is collected into `/data/adb/agh/debug.log`.
 
+The bundle includes both `nat` and `filter` tables (`ADGUARD_BLOCK_DNS`, `AGH_SNI` / `AGH_SNI6` all live in `filter`), the NFQUEUE listeners (`/proc/net/netfilter/nfnetlink_queue`), the module marker files (`disable`, `.stopped`) and the resolver process list taken from `/proc`. Check those first for IPv6 and SNI problems.
+
+> "Open log locally" copies `/data/adb/agh/debug.log` to `/sdcard/Download/agh-debug.log` before trying to open it, because `/data/adb` is readable by root only and a file manager cannot open it there.
+
 ## Status markers
 
 The status is shown in the root manager's module description (the language follows your system locale):
@@ -49,3 +53,9 @@ What to try:
 2. Trim the filter lists in the AdGuardHome panel, or switch to a working upstream DNS
 3. If startup is simply slow, increase `startup_timeout` in `settings.conf` (see the [settings.conf reference](configuration.md#3-settingsconf-reference))
 4. Restart the module so the iptables rules are applied again
+
+## The core keeps running after I stopped it
+
+That used to happen and is fixed: the watchdog (`watchdog_interval`, 60 seconds by default) restarts a dead core on purpose, and older versions also undid a manual "stop". A manual stop now leaves a marker at `/data/adb/agh/.stopped` and the watchdog respects it; rebooting, upgrading the module or tapping "Start core" clears it.
+
+If the Module Markers section of `debug.log` lists that file, the module is in the manually-stopped state.
