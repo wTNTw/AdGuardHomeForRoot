@@ -405,8 +405,17 @@ check)
   # "the rules are gone" apart from "the resolver is merely running".
   chain_is_complete "$iptables_w" "ADGUARD_REDIRECT_DNS" || exit 1
 
-  if [ "$enable_iptables" = true ] && [ "$block_ipv6_dns" = true ]; then
-    $ip6tables_w -t filter -C OUTPUT -j ADGUARD_BLOCK_DNS >/dev/null 2>&1 || exit 1
+  # The IPv6 half is verified in whichever shape the module actually applied:
+  # blocking when block_ipv6_dns=true, redirecting when it is false. Skipping the
+  # redirect case let the watchdog report "hijack is fine" for a chain that had
+  # been flushed by another tool, which is the silent IPv6 bypass this whole
+  # check exists to catch.
+  if [ "$enable_iptables" = true ]; then
+    if [ "$block_ipv6_dns" = true ]; then
+      $ip6tables_w -t filter -C OUTPUT -j ADGUARD_BLOCK_DNS >/dev/null 2>&1 || exit 1
+    elif check_ipv6_nat_support; then
+      chain_is_complete "$ip6tables_w" "ADGUARD_REDIRECT_DNS6" || exit 1
+    fi
   fi
 
   # Only verified while the core actually holds the queue. When it does not, the
