@@ -1,5 +1,7 @@
 # Changelog
 
+- 更新通道按架构分流：arm64 继续使用 `version.json`，armv7 使用新增的 `version-armv7.json`，打包时将该架构的地址写入安装包内的 `module.prop`；此前每次「更新」都把 arm64 包推给 armv7 设备（现在会被安装脚本拒绝）。旧版安装的 armv7 模块需手动安装一次 armv7 包以切换到正确通道
+- Per-architecture update channel: arm64 keeps `version.json`, armv7 uses the new `version-armv7.json`, and packaging stamps that address into the package's own `module.prop`. Previously every armv7 device was offered the arm64 build on update (the installer now refuses it). armv7 modules installed by an older version need one manual armv7 install to move to the right channel
 - 修复「停止核心」被看门狗撤销：手动停止现在会写入 `/data/adb/agh/.stopped` 标记，看门狗（`watchdog_interval`，默认 60 秒）不再把核心拉回来；点「启动核心」、重启设备或升级模块会清除该标记
 - Fix "Stop Core" being undone by the watchdog: a manual stop now writes a `/data/adb/agh/.stopped` marker and the watchdog (`watchdog_interval`, 60s by default) leaves the core down; "Start Core", a reboot or an upgrade clears it
 - 修复卸载后设备断网：卸载脚本先停核心、删除全部 iptables 规则、结束后台助手进程，再删除 `/data/adb/agh`；后台助手（inotify 监听与看门狗）增加了 SIGKILL 兜底——此前 `kill` 杀不掉阻塞在 `sleep` 里的看门狗，重复实例会一直堆积

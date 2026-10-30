@@ -54,6 +54,8 @@ Linux / macOS（需要 `curl` 或 `wget`、`tar`，以及 `zip`、`7z`/`7za`、`
 
 产物 ZIP 的结构与 `src/` 一致，AdGuardHome 二进制位于 `bin/AdGuardHome`。脚本具有缓存机制：如果 `cache` 目录中已存在 AdGuardHome 的缓存版本，则不会重复下载，从而节省时间和带宽。
 
+打包时还会给每个架构写入自己的更新通道：arm64 打包内的 `module.prop` 指向 `version.json`，armv7 指向 `version-armv7.json`（一个 JSON 只能写一个 `zipUrl`）。`pack.sh` 与 `pack.ps1` 都会做这一步，并在写入失败时直接报错而不是默默产出错包。
+
 ## 测试
 
 `tests/` 下的检查全部离线运行，不需要设备与网络：
@@ -91,9 +93,11 @@ workflow 也可手动触发，此时只验证打包、不产出可下载文件�
 
 发版前请同步更新以下文件：
 
-- `version.json`：`versionCode` 递增，`version` 使用 `YYYYMMDD`
+- `version.json`（arm64）与 `version-armv7.json`（armv7）：`versionCode` 递增，`version` 使用 `YYYYMMDD`，两个文件的 `zipUrl` 分别指向对应架构的 ZIP
 - `src/module.prop`：`version` 与 `versionCode`
 - `changelog.md`：仅保留**当前版本**的变更，中英各一段
+
+`tests/check_version.py` 会校验这四个文件与 tag 是否一致，`pack.yml` 在打包前也会跑一遍，因此漏改不会变成一个「用户永远收不到更新」的版本。
 
 ## 提交规范
 

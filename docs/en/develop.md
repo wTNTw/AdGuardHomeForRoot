@@ -54,6 +54,8 @@ The script then automatically:
 
 The resulting ZIP mirrors the layout of `src/`, with the AdGuardHome binary at `bin/AdGuardHome`. Because AdGuardHome is cached, repeated runs do not download it again.
 
+Packing also stamps each build with its own update channel: the arm64 package points at `version.json`, the armv7 one at `version-armv7.json` (one JSON can only name one `zipUrl`). Both `pack.sh` and `pack.ps1` do this and fail loudly if the stamp cannot be written, instead of quietly producing a package that offers the wrong build.
+
 ## Tests
 
 Everything in `tests/` runs offline: no device, no network.
@@ -91,9 +93,11 @@ The workflow can also be run manually, in which case it only verifies packaging 
 
 Before releasing, update:
 
-- `version.json`: increment `versionCode`, set `version` to `YYYYMMDD`
+- `version.json` (arm64) and `version-armv7.json` (armv7): increment `versionCode`, set `version` to `YYYYMMDD`, and keep each `zipUrl` pointing at its own architecture's ZIP
 - `src/module.prop`: `version` and `versionCode`
 - `changelog.md`: keep only the **current release** changes, one Chinese and one English entry
+
+`tests/check_version.py` verifies those four files and the tag agree, and `pack.yml` runs it before packing, so a missed bump cannot turn into a release nobody's update check ever offers.
 
 ## Commit style
 

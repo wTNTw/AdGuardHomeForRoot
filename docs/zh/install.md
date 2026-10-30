@@ -26,6 +26,8 @@
 
 > 注意：备份文件与原文件位于同一目录（`/data/adb/agh/` 与 `/data/adb/agh/bin/`），并非独立的备份目录。
 
+> **armv7 用户注意**：更新检查只能指向一个安装包，因此两个架构各自使用独立的更新通道（arm64 → `version.json`，armv7 → `version-armv7.json`）。旧版本安装的 armv7 模块指向的是 arm64 通道，升级时请手动安装一次 `AdGuardHomeForRoot_armv7.zip` 完成切换；在那之前点击「更新」会下载到 arm64 包，安装脚本会直接拒绝并提示应下载的版本。
+
 ## 卸载
 
 在 root 管理器中移除模块时，卸载脚本会先停掉核心、移除全部 iptables 规则并结束后台助手进程，然后才删除 `/data/adb/agh` 目录，**其中包含 AdGuardHome 配置、拦截规则与全部日志**。如需保留，请在卸载前自行备份该目录。

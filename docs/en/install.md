@@ -26,6 +26,8 @@ Install the new zip over the existing module in your root manager. Because the m
 
 > Note: the backups sit next to the original files (`/data/adb/agh/` and `/data/adb/agh/bin/`), not in a separate backup directory.
 
+> **armv7 users**: the update check can only name one package, so each architecture has its own update channel (arm64 → `version.json`, armv7 → `version-armv7.json`). An armv7 module installed by an older version points at the arm64 channel, so install `AdGuardHomeForRoot_armv7.zip` by hand once to switch over. Until then the "update" button downloads the arm64 package, which the installer rejects with the name of the build to download instead.
+
 ## Uninstall
 
 When the module is removed in your root manager, the uninstall script first stops the core, removes every iptables rule and terminates the background helpers, and only then deletes the `/data/adb/agh` directory, **including the AdGuardHome configuration, filter rules and all logs**. Back it up first if you want to keep them.
