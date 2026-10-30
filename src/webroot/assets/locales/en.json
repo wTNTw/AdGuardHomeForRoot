@@ -34,13 +34,14 @@
 
   "toast.starting": "Starting...",
   "toast.stopping": "Stopping...",
-  "toast.saved": "Configuration saved!",
+  "toast.saved": "Configuration saved and applied!",
   "toast.loading": "Loading...",
   "toast.no_logs": "No logs available",
   "toast.generating": "Generating...",
   "toast.generated": "Generated:",
-  "toast.opening_file": "Opening with system application...",
+  "toast.opened_copy": "Debug log copied to",
   "toast.open_manager": "Please open from KernelSU/APatch Manager",
+  "toast.bad_port": "Port must be 1-65535",
 
   "tab.password": "Password",
 

@@ -27,6 +27,11 @@
 
     const $ = id => document.getElementById(id);
     const t = (key) => window.i18n?.t(key) || key;
+    // Log lines end up inside innerHTML for the highlighting below. They carry
+    // text this module does not own (filter names, domains, upstream URLs), and
+    // this page holds a root exec bridge, so anything unescaped is code.
+    const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+    const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ESC[c]);
     let currentStatus = "checking";
     const elements = {
         statusText: $('status-text'),
@@ -45,20 +50,27 @@
     };
 
     function showToast(msg) {
-        const t = document.createElement('div');
-        t.className = 'toast';
-        t.textContent = msg;
-        $('toast-container').appendChild(t);
-        setTimeout(() => t.remove(), 3000);
+        const el = document.createElement('div');
+        el.className = 'toast';
+        el.textContent = msg;
+        $('toast-container').appendChild(el);
+        setTimeout(() => el.remove(), 3000);
     }
 
     async function refresh() {
         const marker = "::SPLIT::";
+        // The version only changes with a module update, which reloads this page,
+        // so asking the binary again every 5s was a pointless fork+exec. The value
+        // is interpolated back into a shell command, so keep it to version-ish
+        // characters only.
+        const versionCmd = window._aghVersion
+            ? `echo "${window._aghVersion}"`
+            : `/data/adb/agh/bin/AdGuardHome --version | head -1 | sed 's/.*version //'`;
         const cmd = `
             [ -f ${pidFile} ] && cat ${pidFile} || echo ""; echo "${marker}";
             cat ${settingsPath} 2>/dev/null; echo "${marker}";
             grep -m1 "address:" ${yamlPath} | sed 's/.*address: *//'; echo "${marker}";
-            /data/adb/agh/bin/AdGuardHome --version | head -1 | sed 's/.*version //'
+            ${versionCmd}
         `;
         const res = await exec(cmd);
         const parts = res.s.split(marker).map(p => p.trim());
@@ -90,7 +102,9 @@
         }
 
         window._webAddr = parts[2] || "127.0.0.1:3000";
-        elements.version.textContent = (parts[3] || "...");
+        const version = (parts[3] || "").replace(/[^0-9A-Za-z.+\-]/g, "");
+        if (version) window._aghVersion = version;
+        elements.version.textContent = (version || "...");
     }
 
     $('btn-start').onclick = async () => {
@@ -106,14 +120,37 @@
     };
 
     $('btn-save').onclick = async () => {
+        const port = String(elements.fields.redir_port.value || "").trim();
+        if (!/^\d+$/.test(port) || +port < 1 || +port > 65535) {
+            showToast(t("toast.bad_port"));
+            return;
+        }
+
         let cmd = "";
         for (let k in elements.fields) {
             const el = elements.fields[k];
-            const v = el.type === 'checkbox' ? el.checked : el.value;
-            cmd += `sed -i "s/^${k}=.*/${k}=${v}/" ${settingsPath}; `;
+            // These values are interpolated into a double-quoted shell string, so
+            // no quote, slash or space may survive: a stray one would break the
+            // whole update and leave a half-written settings.conf behind.
+            const v = (el.type === 'checkbox' ? String(el.checked) : String(el.value).trim())
+                .replace(/[^A-Za-z0-9_.:-]/g, '');
+            // An upgraded module keeps the user's old settings.conf, so a key
+            // added in a later version can be missing entirely and a bare sed
+            // would silently do nothing. Append it instead.
+            cmd += `if grep -q "^${k}=" ${settingsPath}; then ` +
+                `sed -i "s|^${k}=.*|${k}=${v}|" ${settingsPath}; ` +
+                `else echo "${k}=${v}" >> ${settingsPath}; fi; `;
         }
         await exec(cmd);
+
+        // Actually apply: the button says "save and apply", and rewriting the file
+        // alone left iptables running on the previous port/user/mode.
+        await exec(`${scriptTool} reload`);
+
+        // Re-read from disk so the panel shows what was really stored.
+        window._loaded = false;
         showToast(t("toast.saved"));
+        refresh();
     };
 
     elements.linkPanel.onclick = () => {
@@ -134,18 +171,23 @@
     });
 
     let logType = 'bin';
+    let logRaw = "";        // last loaded text, kept so a language switch cannot wipe the view
     async function loadLog() {
         elements.logContent.textContent = t("toast.loading");
         const path = logType === 'bin' ? binLogPath : historyLogPath;
         const res = await exec(`tail -n 100 ${path}`);
-        if (!res.s) {
+        logRaw = res.s || "";
+        if (!logRaw) {
             elements.logContent.textContent = t("toast.no_logs");
             return;
         }
 
-        // Apply simple highlighting
-        const lines = res.s.split('\n').map(line => {
-            if (!line.trim()) return "";
+        // Apply simple highlighting. Every line is escaped first: the regexes below
+        // only look for timestamps, level tags and status emoji, so nothing they
+        // add is affected, while anything the log itself contains stays text.
+        const lines = logRaw.split('\n').map(raw => {
+            if (!raw.trim()) return "";
+            let line = escapeHtml(raw);
             // Highlight Timestamps
             line = line.replace(/^(\d{4}[-/]\d{2}[-/]\d{2}\s\d{2}:\d{2}:\d{2}(\.\d+)?)/, '<span style="color:#888">$1</span>');
             // Highlight Levels
@@ -179,9 +221,14 @@
     };
 
     $('btn-open-debug').onclick = async () => {
-        // Use system action to open the file instead of internal viewer
-        await exec(`am start -a android.intent.action.VIEW -d "file://${debugLogPath}" -t "text/plain" || am start -a android.intent.action.VIEW -d "content://com.android.externalstorage.documents/document/primary%3A${debugLogPath.replace(/^\/data\/adb\//, 'adb/')}" -t "text/plain"`);
-        showToast(t("toast.opening_file"));
+        // /data/adb is root-only and lives outside primary storage, so the old
+        // file:// URI could never be opened and the content:// fallback pointed at
+        // a path that does not exist (issue #75). Copy it somewhere a viewer can
+        // read, then open that copy and say where it is either way.
+        const sharePath = "/sdcard/Download/agh-debug.log";
+        await exec(`cp -f ${debugLogPath} ${sharePath} && chmod 644 ${sharePath}`);
+        await exec(`am start -a android.intent.action.VIEW -d "content://com.android.externalstorage.documents/document/primary%3ADownload%2Fagh-debug.log" -t "text/plain" -f 0x1 >/dev/null 2>&1`);
+        showToast(`${t("toast.opened_copy")} ${sharePath}`);
     };
 
     // ==================== 密码计算 (AdGuardHome.yaml · bcrypt) ====================
@@ -387,8 +434,12 @@
             elements.statusText.textContent = t(`status.${currentStatus}`);
         }
 
-        if (elements.logContent.textContent === t("toast.no_logs")) {
-            elements.logContent.textContent = t("logs.waiting");
+        // #log-content no longer carries data-i18n, so translatePage leaves loaded
+        // logs alone; only the two placeholder states need a new language.
+        if (!logRaw) {
+            elements.logContent.textContent = elements.logContent.textContent === t("toast.no_logs")
+                ? t("toast.no_logs")
+                : t("logs.waiting");
         }
     });
 

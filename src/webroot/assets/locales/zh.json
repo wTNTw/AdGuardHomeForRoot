@@ -34,13 +34,14 @@
 
   "toast.starting": "正在启动...",
   "toast.stopping": "正在停止...",
-  "toast.saved": "配置已保存!",
+  "toast.saved": "配置已保存并生效!",
   "toast.loading": "读取中...",
   "toast.no_logs": "暂无日志",
   "toast.generating": "正在生成...",
   "toast.generated": "已生成至:",
-  "toast.opening_file": "尝试调用系统程序打开...",
+  "toast.opened_copy": "调试日志已复制到",
   "toast.open_manager": "请从模块管理器打开",
+  "toast.bad_port": "端口需在 1-65535 之间",
 
   "tab.password": "密码计算",
 
