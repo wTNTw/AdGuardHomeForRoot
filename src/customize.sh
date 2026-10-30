@@ -21,6 +21,40 @@ function error() {
 
 info "- 🚀 Installing AdGuardHome for $ARCH" "- 🚀 开始安装 AdGuardHome for $ARCH"
 
+# The update channel can only point at one asset (version.json -> arm64), so an
+# armv7 device that updates through the root manager receives the arm64 package.
+# Installing it looks successful and then fails at boot with ENOEXEC, which reads
+# as "the module is broken". Refuse early, while both the zip and the working
+# installation are still untouched.
+elf_machine() {
+  # e_machine lives at offset 18 (2 bytes, little endian):
+  #   0xB7 0x00 = EM_AARCH64, 0x28 0x00 = EM_ARM
+  unzip -p "$ZIPFILE" "bin/AdGuardHome" 2>/dev/null | od -An -j18 -N2 -tx1 2>/dev/null | tr -d ' \n'
+}
+
+check_package_arch() {
+  local machine need have
+  machine=$(elf_machine)
+  case "$machine" in
+    b700) need="arm64" ;;
+    2800) need="arm" ;;
+    *) return 0 ;;   # unknown or x86 build: nothing sensible to assert
+  esac
+  # $ARCH comes from the root manager (arm64 / arm / x86 / x64); uname is the
+  # fallback for installers that do not set it. armv8l means 32-bit userspace on
+  # a 64-bit kernel, which needs the arm build.
+  case "${ARCH:-$(uname -m)}" in
+    arm64|aarch64) have="arm64" ;;
+    arm|armv7*|armv8l|armv8*) have="arm" ;;
+    *) return 0 ;;
+  esac
+  [ "$need" = "$have" ] && return 0
+  error "- ❌ This package is built for $need, but this device is $have. Download AdGuardHomeForRoot_${have}.zip and install that instead." \
+    "- ❌ 此安装包为 $need 架构，当前设备是 $have，请改为安装 AdGuardHomeForRoot_${have}.zip"
+}
+
+check_package_arch
+
 AGH_DIR="/data/adb/agh"
 BIN_DIR="$AGH_DIR/bin"
 SCRIPT_DIR="$AGH_DIR/scripts"
@@ -71,13 +105,18 @@ extract_all() {
 # Print the PIDs of running AdGuardHome processes. Must not fork per process:
 # `$(cat /proc/<pid>/comm)` over a device with a thousand processes takes
 # seconds, while the read builtin needs none.
+#
+# ls+grep instead of a /proc/[0-9]* glob: some vendor kernels expose entries like
+# /proc/8350_reg, which matches the glob but has no comm file.
 agh_pids() {
   local p comm
-  for p in /proc/[0-9]*; do
+  for p in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
     comm=""
-    read -r comm <"$p/comm" 2>/dev/null
+    # The brace group swallows the "no such file" notice for processes that exit
+    # between the listing and the read; plain `read ... 2>/dev/null` does not.
+    { read -r comm <"/proc/$p/comm"; } 2>/dev/null
     [ "$comm" = "AdGuardHome" ] || continue
-    echo "${p#/proc/}"
+    echo "$p"
   done
 }
 
