@@ -1,0 +1,30 @@
+# AdGuardHome SNI filter (queue_num 7) - see /proc/net/netfilter/nfnetlink_queue
+# Hooked before fw4's tproxy/mangle rules so the SNI ClientHello is queued even
+# when a transparent proxy would otherwise take the packet out of the forward path.
+# `queue flags bypass` keeps traffic flowing when AdGuardHome is not listening.
+# The UDP/443 line feeds the core's sni_filter.drop_quic handling (QUIC packets are
+# only queued for the first 20 KB of a flow, same as the TCP rule).
+chain agh_sni {
+	type filter hook prerouting priority -160; policy accept;
+
+	iifname != "lo" tcp dport { 443, 8443 } ct original bytes 0-20000 counter queue flags bypass to 7
+	iifname != "lo" udp dport 443 ct original bytes 0-20000 counter queue flags bypass to 7
+}
+
+# AdGuardHome 注入的伪造 RST（源地址是远端站点，不是本机地址）在 conntrack 里
+# 找不到对应条目，会被 fw4 的 output 链 `ct state vmap { invalid : drop, ... }`
+# 丢掉——sendto 因此返回 EPERM（crash.log 里 "sending the reset segment ...
+# operation not permitted"），被拦的连接只能卡到超时，而不是文档说的十几毫秒失败。
+#
+# `notrack` 在 conntrack（priority -200）之前生效，让这些包变成 untracked，
+# 于是不再命中 `ct state invalid` 的 drop。判据是 `fib saddr type != local`，
+# 只对"源地址不是本机"的包生效；本机进程正常发出的 RST（源地址为本机）仍然
+# 走原来的 conntrack 判定，防火墙强度不变。output 钩子只处理本机产生的包，
+# LAN 客户端无法利用这条规则绕过 forward 链。
+#
+# 实测：被拦的 SNI 从"5 秒超时"变成"0.05 秒 ConnectionResetError"。
+chain agh_sni_notrack {
+	type filter hook output priority -300; policy accept;
+
+	tcp flags & (rst) == rst fib saddr type != local counter notrack
+}

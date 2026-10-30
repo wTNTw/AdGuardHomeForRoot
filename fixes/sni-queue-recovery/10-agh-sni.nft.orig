@@ -1,0 +1,12 @@
+# AdGuardHome SNI filter (queue_num 7) - see /proc/net/netfilter/nfnetlink_queue
+# Hooked before fw4's tproxy/mangle rules so the SNI ClientHello is queued even
+# when a transparent proxy would otherwise take the packet out of the forward path.
+# `queue flags bypass` keeps traffic flowing when AdGuardHome is not listening.
+# The UDP/443 line feeds the core's sni_filter.drop_quic handling (QUIC packets are
+# only queued for the first 20 KB of a flow, same as the TCP rule).
+chain agh_sni {
+	type filter hook prerouting priority -160; policy accept;
+
+	iifname != "lo" tcp dport { 443, 8443 } ct original bytes 0-20000 counter queue flags bypass to 7
+	iifname != "lo" udp dport 443 ct original bytes 0-20000 counter queue flags bypass to 7
+}
