@@ -1,0 +1,68 @@
+name: Lint
+
+# Static checks plus the offline test harnesses. Nothing here needs a device or a
+# network download, so it stays fast enough to run on every pull request.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    name: Static checks and tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Shell syntax (bash, plus busybox ash like the device)
+        shell: bash
+        run: |
+          set -uo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq busybox
+          rc=0
+          while IFS= read -r f; do
+            bash -n "$f" || { echo "::error file=$f::bash -n failed"; rc=1; }
+          done < <(git ls-files '*.sh')
+          # The device runs these under busybox ash / mksh, which reject bashisms
+          # that bash -n happily accepts.
+          while IFS= read -r f; do
+            busybox sh -n "$f" || { echo "::error file=$f::busybox sh -n failed"; rc=1; }
+          done < <(git ls-files 'src/*.sh' 'src/scripts/*.sh' 'src/META-INF/com/google/android/update-binary')
+          exit $rc
+
+      - name: JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r f; do
+            node --check "$f"
+          done < <(git ls-files 'src/webroot/*.js' 'src/webroot/**/*.js' 'tests/*.js')
+
+      - name: JSON validity
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r f; do
+            python3 -m json.tool "$f" > /dev/null
+            echo "ok  $f"
+          done < <(git ls-files '*.json')
+
+      - name: Translation keys match the UI
+        run: python3 tests/check_i18n.py
+
+      - name: Version files agree
+        run: python3 tests/check_version.py
+
+      - name: Web UI behaviour tests
+        run: node tests/webui.test.js
+
+      - name: Installer architecture guard tests
+        run: bash tests/arch.test.sh

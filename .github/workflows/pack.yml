@@ -28,6 +28,12 @@ jobs:
             exit 1
           fi
 
+      # A tag that does not match module.prop / version.json publishes a release
+      # the root manager's update check will never pick up, so fail before packing.
+      - name: Validate version metadata
+        shell: bash
+        run: python3 tests/check_version.py
+
       - name: Pack both architectures
         shell: bash
         run: bash pack.sh all
