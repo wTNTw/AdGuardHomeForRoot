@@ -3,6 +3,21 @@
 [ -d "/data/adb/ksu/bin" ] && export PATH="/data/adb/ksu/bin:$PATH"
 [ -d "/data/adb/ap/bin" ] && export PATH="/data/adb/ap/bin:$PATH"
 
+# Defaults for keys that an upgraded installation can legitimately be missing:
+# the installer keeps the user's old settings.conf, so anything added to that file
+# later simply is not there. Every consumer reads these through the variables
+# below, and a missing key used to fail silently (an empty redir_port never looks
+# "ready", an empty adg_user cannot be launched, an empty block_ipv6_dns quietly
+# switched IPv6 from "block" to "hijack", an empty timezone logged in UTC).
+# Keep these values identical to src/settings.conf.
+enable_iptables=${enable_iptables:-true}
+block_ipv6_dns=${block_ipv6_dns:-true}
+redir_port=${redir_port:-5591}
+startup_timeout=${startup_timeout:-120}
+adg_user=${adg_user:-root}
+adg_group=${adg_group:-net_raw}
+timezone=${timezone:-Asia/Shanghai}
+
 # most of the users are Chinese, so set default language to Chinese
 language="zh"
 
