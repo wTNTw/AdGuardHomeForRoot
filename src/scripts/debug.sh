@@ -53,6 +53,10 @@ LOG="$AGH_DIR/debug.log"
   tail -n 30 "$AGH_DIR/bin.log" 2>/dev/null
   echo
 
+  echo "== Module Markers =="
+  ls -l /data/adb/modules/AdGuardHome/disable "$AGH_DIR/.stopped" 2>&1
+  echo
+
   echo "== AGH Settings =="
   cat "$AGH_DIR/settings.conf" 2>/dev/null
   echo
@@ -62,7 +66,26 @@ LOG="$AGH_DIR/debug.log"
   echo
 
   echo "== Running Processes (AdGuardHome) =="
-  ps -A | grep AdGuardHome
+  # /proc is authoritative: this ROM's ps prints only argv[0] for the resolver and
+  # a root-manager session may not see every process at all.
+  found=0
+  # ls+grep, not a /proc/[0-9]* glob: some vendor kernels expose entries such as
+  # /proc/8350_reg, which matches the glob but has no comm file.
+  for p in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
+    comm=""
+    # The brace group swallows the "no such file" notice for processes that exit
+    # between the listing and the read; plain `read ... 2>/dev/null` does not.
+    { read -r comm <"/proc/$p/comm"; } 2>/dev/null
+    if [ "$comm" = "AdGuardHome" ]; then
+      echo "PID $p running"
+      found=1
+    fi
+  done
+  [ "$found" = 1 ] || echo "no AdGuardHome process"
+  echo
+
+  echo "== NFQUEUE listeners =="
+  cat /proc/net/netfilter/nfnetlink_queue 2>/dev/null
   echo
 
   echo "== iptables -t nat -L -n -v =="
@@ -71,6 +94,16 @@ LOG="$AGH_DIR/debug.log"
 
   echo "== ip6tables -t nat -L -n -v =="
   ip6tables -t nat -L -n -v
+  echo
+
+  # The chains that are actually reported broken (IPv6 blocking, SNI) live in the
+  # filter table, which the nat dump above never showed.
+  echo "== iptables -t filter -S =="
+  iptables -t filter -S
+  echo
+
+  echo "== ip6tables -t filter -S =="
+  ip6tables -t filter -S
   echo
 
   echo "== Network Interfaces =="
