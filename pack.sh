@@ -99,7 +99,7 @@ EOF
 # offered the arm64 build (which the installer now rejects). The arm64 package
 # keeps pointing at version.json so existing installations keep working; the armv7
 # package is stamped with the JSON that names the armv7 asset.
-UPDATE_JSON_URL=https://raw.githubusercontent.com/twoone-3/AdGuardHomeForRoot/main
+UPDATE_JSON_URL=https://raw.githubusercontent.com/wTNTw/AdGuardHomeForRoot/main
 
 get_update_json() {
   case "$1" in

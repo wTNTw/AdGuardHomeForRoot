@@ -76,7 +76,7 @@ $env:PATH += ";C:\Program Files\7-Zip"
 # one JSON can only name one zipUrl, so with a single file every armv7 device is
 # offered the arm64 build (which the installer now rejects). arm64 keeps pointing
 # at version.json so existing installations keep working; armv7 gets its own file.
-$UpdateJsonBase = "https://raw.githubusercontent.com/twoone-3/AdGuardHomeForRoot/main"
+$UpdateJsonBase = "https://raw.githubusercontent.com/wTNTw/AdGuardHomeForRoot/main"
 
 function New-ModulePropForArch {
   param([string]$UpdateJson, [string]$Suffix)
