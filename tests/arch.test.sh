@@ -77,24 +77,34 @@ run_case "arm64 package, ARCH unset, uname=armv8l"     "$WORK/arm64.zip" ""     
 run_case "armv7 package, ARCH unset, uname=aarch64"    "$WORK/arm32.zip" ""      abort aarch64
 run_case "non-ELF payload is not judged"               "$WORK/junk.zip"  arm64   ok
 
-# Optional: also exercise a real package if the caller built one.
-if [ -f cache/AdGuardHomeForRoot_arm64.zip ]; then
-  real=$(
+# Optional: also exercise real packages when the caller built them.
+check_real_zip() {  # $1 zip, $2 ARCH, $3 expect (abort|ok), $4 label
+  local out rc got
+  [ -f "$1" ] || return 0
+  out=$(
     set +e
     ui_print() { :; }
     abort() { exit 9; }
     error() { abort "$1" "$2"; }
     info() { :; }
-    ZIPFILE="cache/AdGuardHomeForRoot_arm64.zip"
-    ARCH="arm"
+    ZIPFILE="$1"
+    ARCH="$2"
     . "$FN"
   )
-  if [ $? = 9 ]; then
-    pass=$((pass + 1)); echo "PASS  real arm64 package rejected for ARCH=arm"
+  rc=$?
+  got="ok"
+  [ "$rc" = 9 ] && got="abort"
+  if [ "$got" = "$3" ]; then
+    pass=$((pass + 1)); echo "PASS  $4 -> $got"
   else
-    fail=$((fail + 1)); echo "FAIL  real arm64 package accepted for ARCH=arm"
+    fail=$((fail + 1)); echo "FAIL  $4 -> $got (expected $3)"
   fi
-fi
+}
+
+check_real_zip cache/AdGuardHomeForRoot_arm64.zip arm  abort "real arm64 package on an armv7 device"
+check_real_zip cache/AdGuardHomeForRoot_arm64.zip arm64 ok   "real arm64 package on an arm64 device"
+check_real_zip cache/AdGuardHomeForRoot_armv7.zip arm64 abort "real armv7 package on an arm64 device"
+check_real_zip cache/AdGuardHomeForRoot_armv7.zip arm   ok   "real armv7 package on an armv7 device"
 
 echo
 echo "$pass passed, $fail failed"

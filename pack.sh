@@ -92,6 +92,23 @@ EOF
   esac
 }
 
+# Per-architecture update channel.
+#
+# The root manager's update check reads the updateJson baked into module.prop, and
+# one JSON can only name one zipUrl. With a single file every armv7 device is
+# offered the arm64 build (which the installer now rejects). The arm64 package
+# keeps pointing at version.json so existing installations keep working; the armv7
+# package is stamped with the JSON that names the armv7 asset.
+UPDATE_JSON_URL=https://raw.githubusercontent.com/twoone-3/AdGuardHomeForRoot/main
+
+get_update_json() {
+  case "$1" in
+    arm64) echo "$UPDATE_JSON_URL/version.json" ;;
+    armv7) echo "$UPDATE_JSON_URL/version-armv7.json" ;;
+    *) echo "Unsupported arch for update channel: $1" >&2; exit 1 ;;
+  esac
+}
+
 mkdir -p "$CACHE_DIR"
 
 echo "Downloading AdGuardHome..."
@@ -141,6 +158,16 @@ for arch in $ARCHS; do
   # Same layout as pack.ps1 / .github/workflows/pack.yml:
   # copy src/* to zip root, then place binary at bin/AdGuardHome
   cp -a "$SRC_DIR/." "$staging/"
+
+  # Stamp this build's update channel into its own module.prop.
+  update_json="$(get_update_json "$arch")"
+  sed -i "s|^updateJson=.*|updateJson=$update_json|" "$staging/module.prop"
+  if ! grep -qx "updateJson=$update_json" "$staging/module.prop"; then
+    echo "Failed to set updateJson in the packaged module.prop" >&2
+    exit 1
+  fi
+  echo "Update channel ($arch): $update_json"
+
   mkdir -p "$staging/bin"
   cp -f "$binary" "$staging/bin/AdGuardHome"
   chmod +x "$staging/bin/AdGuardHome"
