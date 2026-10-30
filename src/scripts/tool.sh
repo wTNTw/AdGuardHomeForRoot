@@ -1,16 +1,54 @@
 . /data/adb/agh/settings.conf
 . /data/adb/agh/scripts/base.sh
 
-# An upgrade keeps the user's existing settings.conf, so a key added to that
-# file after the user installed is simply missing here and arrives empty.
-startup_timeout="${startup_timeout:-120}"
-
 move_to_system_cgroup() {
   echo $$ > /sys/fs/cgroup/cgroup.procs 2>/dev/null
   [ -f /dev/memcg/system/cgroup.procs ] && echo $$ > /dev/memcg/system/cgroup.procs 2>/dev/null
   [ -f /dev/cpuctl/system/cgroup.procs ] && echo $$ > /dev/cpuctl/system/cgroup.procs 2>/dev/null
   [ -f /dev/cpuset/system-background/cgroup.procs ] && echo $$ > /dev/cpuset/system-background/cgroup.procs 2>/dev/null
   [ -f /dev/blkio/cgroup.procs ] && echo $$ > /dev/blkio/cgroup.procs 2>/dev/null
+}
+
+# A manual stop has to outlive one watchdog tick. The watchdog restarts a dead
+# resolver on purpose (crash recovery), so without a recorded intent the "Stop
+# Core" button and action.sh's toggle were undone within watchdog_interval
+# seconds and the module looked like it ignored the user. Only an explicit start
+# clears the marker; it lives outside MOD_PATH so it can never be confused with
+# the "disable" marker the root managers write.
+STOP_FILE="$AGH_DIR/.stopped"
+
+# Serialise the state changes. Four entry points can ask for start/stop at
+# the same moment -- the WebUI buttons, action.sh, the inotify watcher and the
+# watchdog -- and a start holds this for up to startup_timeout seconds while it
+# waits for the DNS listener. Two starts used to race for the port: the loser
+# died, then dutifully tore down the working iptables chain of the winner on its
+# way out, which is the "module is running but nothing is filtered" report.
+LOCK_DIR="$AGH_DIR/.lock"
+
+# Wait for the lock. $1 caps the wait in seconds; a holder that never releases it
+# (killed mid-start, rebooted shell) is taken over instead of wedging the module.
+acquire_lock() {
+  local limit="${1:-$((startup_timeout + 30))}" waited=0
+  while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+    waited=$((waited + 1))
+    if [ "$waited" -ge "$limit" ]; then
+      log "Lock held for ${waited}s, taking it over" "锁已占用 ${waited} 秒，强制接管"
+      rm -rf "$LOCK_DIR"
+      mkdir "$LOCK_DIR" 2>/dev/null || return 1
+      break
+    fi
+    sleep 1
+  done
+  trap 'rmdir "$LOCK_DIR" 2>/dev/null' EXIT INT TERM HUP
+  return 0
+}
+
+# For the watchdog: never queue behind a running start, the next tick is a minute
+# away and that is a better outcome than stacking work.
+try_lock() {
+  mkdir "$LOCK_DIR" 2>/dev/null || return 1
+  trap 'rmdir "$LOCK_DIR" 2>/dev/null' EXIT INT TERM HUP
+  return 0
 }
 
 move_to_system_cgroup
@@ -97,6 +135,9 @@ wait_for_dns_ready() {
 
 start_adguardhome() {
   local existing_pid ready_rc
+
+  # An explicit start is the only thing that cancels a manual stop.
+  rm -f "$STOP_FILE"
 
   # check if AdGuardHome is already running
   if [ -f "$PID_FILE" ] && is_agh_pid "$(cat "$PID_FILE" 2>/dev/null)"; then
@@ -203,6 +244,10 @@ stop_adguardhome() {
     log "🔴 AdGuardHome is not running" "🔴 AdGuardHome 未在运行"
   fi
 
+  # Record the intent before the PID file disappears, so the watchdog never sees
+  # "not running with no reason" and starts it again.
+  : >"$STOP_FILE"
+
   rm -f "$PID_FILE"
   update_description "🔴 Stopped" "🔴 已停止"
 }
@@ -219,6 +264,9 @@ ensure_adguardhome() {
   # Watchdog entry point. An intentional module disable drops a "disable" marker
   # into the module folder; nothing here may fight that decision.
   [ -f "${MOD_PATH:-/data/adb/modules/AdGuardHome}/disable" ] && exit 0
+  # Same for a manual stop from the WebUI or the action button: the user asked
+  # for the resolver to stay down, so repairing it would be fighting them.
+  [ -f "$STOP_FILE" ] && exit 0
 
   if [ -f "$PID_FILE" ] && is_agh_pid "$(cat "$PID_FILE" 2>/dev/null)"; then
     # The resolver being up does not prove the hijack survived. If the watcher
@@ -236,15 +284,21 @@ ensure_adguardhome() {
 
 case "$1" in
 start)
+  acquire_lock
   start_adguardhome
   ;;
 stop)
+  # A start can hold the lock for startup_timeout; the user asked for "now", so
+  # give it a short window and then take the lock over.
+  acquire_lock 20
   stop_adguardhome
   ;;
 toggle)
+  acquire_lock 20
   toggle_adguardhome
   ;;
 ensure)
+  try_lock || exit 0
   ensure_adguardhome
   ;;
 *)
