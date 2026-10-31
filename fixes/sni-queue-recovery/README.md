@@ -1,6 +1,6 @@
 # SNI 阻断失效：诊断、根因与修复（AdguardHome-Mod + LuCI 面板现场）
 
-> 本文是 2026-10-30 在一台 ImmortalWrt 25.12.1（rockchip/armv8，`192.168.31.2`）
+> 本文是 2026-10-30/31 在一台 ImmortalWrt 25.12.1（rockchip/armv8，`192.168.31.2`）
 > 上的完整排查记录。核心为 `liuzq2002/AdguardHome-Mod v2026-10-29`，
 > 由本面板（luci-app-adguardhome-dashboard）管理，SNI 阻断靠
 > `/etc/nftables.d/10-agh-sni.nft` 把 443/8443 送进 NFQUEUE 7。
@@ -40,7 +40,7 @@ DNS 解析、广告过滤一切正常，只是 HTTPS 连接不再被拦；`/etc/
 上游 `SNI_HANDOVER.md` §8 自己也确认了这一点（"watcher 重建成功一次：恢复；但如果
 重建失败，当前 watcher 不会自动继续重试"），并建议用外部 watchdog。
 
-## 3. 修复方案（三层，全部已落地验证）
+## 3. 修复方案
 
 ### 3.1 源码层：`sni-queue-recovery.patch`（根治）
 
@@ -103,16 +103,51 @@ chain agh_sni_notrack {
 `accept` 只结束当前链，后面的 `inet fw4 output` 照样 drop（实测该链 counters 涨到 50 包，
 EPERM 依旧）。必须 `notrack`，或把规则塞进 fw4 的 output 链（但 `fw4 reload` 会覆盖）。
 
-### 3.3 观测层：`agh-sni-watchdog.sh`（兜住内核修不了的情况）
+### 3.3 观测层：watchdog —— **分析后已移除**
 
-procd 守护，每 5 秒读 `/proc/net/netfilter/nfnetlink_queue`：
+部署 watchdog 后观察了 **15.9 小时 / 643040 个入队包**：
 
-- 队列行消失 / `peer_port = 0` / `queue_total ≥ 768` 且 `id_seq` 不动 → 连续 3 次确认（≈15 秒）后重启 AGH
-- 10 分钟冷却，避免重启风暴；重启后等 30 秒复验队列绑定
-- 顺带检查 nft 链是否还在（`fw4 reload` 丢链也常见），缺了先 `firewall reload`
-- `agh-sni-watchdog.sh --once` 可单次体检（退出码 0=正常，1=异常）
+```
+queue 7: 7 <pid> 0 2 16384 0 0 643144 1      total=0  dropped=0  user_dropped=0
+counters: received=643040 inspected=67329 names=38213 resets=33451 verdict_errors=0
+重建次数（"re-registering the nfqueue"）：0
+ENOBUFS（"no buffer space available"）：0
+```
 
-仍需保留的原因：callback 卡死、OOM、进程被 kill 这类情况进程内无法自愈。
+补丁把这两个致命路径都堵死之后，watchdog 只剩两种极低概率场景的价值：
+
+| 场景 | 补丁后 | watchdog 价值 |
+|---|---|---|
+| TLS 突发打爆 socket 缓冲 | 8 MiB 缓冲，实测 15.9h 未触发 | 无 |
+| 队列丢失 / 重建失败 | 退避无限重试 | 无 |
+| 接收循环卡死（recvmsg 挂住） | 无自愈（但核心会打 `the nfqueue is backed up` 警告） | 有 |
+| 进程 OOM / 被杀 | procd `respawn` 自动拉起 | 无 |
+| nft 链被外部清空 | `fw4 reload` 会重建 | 有 |
+
+结论：既然目标是"尽量减少常驻依赖"，就把它**从路由器上移除**（零常驻进程、
+零额外 init 脚本），只保留脚本本身供手动体检。真出现"卡死"时：
+
+```sh
+cp /path/to/agh-sni-watchdog.sh /usr/bin/ && chmod +x /usr/bin/agh-sni-watchdog.sh
+/usr/bin/agh-sni-watchdog.sh --once      # 单次体检，不需要守护
+```
+
+需要恢复常驻守护（例如上游版本又把自愈改坏）时：
+
+```sh
+cp agh-sni-watchdog.sh /usr/bin/agh-sni-watchdog.sh
+cp agh-sni-watchdog.init /etc/init.d/agh-sni-watchdog
+chmod +x /usr/bin/agh-sni-watchdog.sh /etc/init.d/agh-sni-watchdog
+/etc/init.d/agh-sni-watchdog enable && /etc/init.d/agh-sni-watchdog start
+```
+
+### 3.4 顺带修掉的报错
+
+| 报错 | 原因 | 处理 |
+|---|---|---|
+| `WARN the time zone is UTC; set TZ ...`（每次启动一条） | procd 没给 AGH 设 `TZ`，日志全是 UTC，和 syslog（CST）对不上 | `/etc/init.d/AdGuardHome` 加 `procd_set_param env TZ=Asia/Shanghai`（AGH 内置 tzdata，无需 zoneinfo 包），日志时间戳变成本地时间 |
+| syslog 被 `queue 99 unbound` 刷了 1138 行 | 自测 watchdog 时用 `&` 起的实例没被杀干净（`INIT_SCRIPT=/bin/true`、`COOLDOWN=0`），一直在自旋重启并报错 | 已 `kill -9` 清除；教训：**自测别再后台起实例**，用 `--once` 或 `timeout` + 事后 `pgrep` 复核 |
+| `[error] filtering: updating filter ... EOF`（4 条，24h 周期） | 抓取 GitHub raw 时连接被中断（一次性网络抖动），不是过滤逻辑问题 | 下一轮自动重试；如需稳定可给 AGH 配 `http_proxy` 或换镜像 URL |
 
 ## 4. 现场验证数据
 
@@ -120,25 +155,19 @@ procd 守护，每 5 秒读 `/proc/net/netfilter/nfnetlink_queue`：
 
 | SNI | 目标 | 修复前 | 修复后 |
 |---|---|---|---|
-| `www.bing.com`（未拦） | 111.206.209.249 | handshake OK 0.13s | handshake OK 0.12s |
-| `hm.baidu.com`（拦） | 111.206.209.249 | 卡 5.04s 超时 | **ConnectionResetError 0.04s** |
-| `www.bing.com`（未拦） | 153.3.237.72 | handshake OK 0.12s | handshake OK 0.11s |
+| `www.bing.com`（未拦） | 111.206.209.249 | handshake OK 0.13s | handshake OK 0.11s |
+| `hm.baidu.com`（拦） | 111.206.209.249 | 卡 5.04s 超时 | **ConnectionResetError 0.05s** |
+| `www.bing.com`（未拦） | 153.3.237.72 | handshake OK 0.12s | handshake OK 0.13s |
 | `pos.baidu.com`（拦） | 153.3.237.72 | 卡 5.05s 超时 | **ConnectionResetError 0.05s** |
 
-**队列健康**（自补丁核心启动后）
+**旁证**
 
-```
-queue 7: 7 <pid> 0 2 16384 0 0 <id_seq 持续增长> 1     total=0  dropped=0  user_dropped=0
-[error] 行数：0    （无 ENOBUFS / mismatched sequence / bad file descriptor）
-```
-
-**其他旁证**
-
-- `enlarged the nfqueue read buffer bytes=8388608` 出现在启动日志（补丁生效）
-- `sni_resets_sent` 在 notrack 修复后一分钟内 19 → 91（RST 真的发出去了）
-- watchdog 自测（假队列 99）：`sample 1/2 bad → restarting ... because: queue 99 unbound`
+- 启动日志出现 `enlarged the nfqueue read buffer bytes=8388608`（补丁生效）
+- `agh_sni_notrack` 计数器 33441 包 ≈ `sni_resets_sent` 33451 → RST 现在几乎全部真正发出
+  （修复前只有零星几次 sendto 成功）
+- 移除 watchdog、加 TZ 后重启：`[error]/[warn]` 各 0 条，启动行时间戳已是 CST
 - `fw4 print` 含 `include "/etc/nftables.d/*.nft"`，整套生成脚本 `nft -c -f` 校验通过
-  → 重启 / `fw4 reload` 后规则会自动恢复
+  → 重启 / `fw4 reload` 后规则自动恢复
 
 ## 5. 目录内容
 
@@ -147,11 +176,12 @@ AdGuardHome-arm64         补丁版核心（linux/arm64，静态链接，含前�
 sni-queue-recovery.patch  上游 diff（单文件 +83/-3）
 10-agh-sni.nft            含 agh_sni + agh_sni_notrack 两条链的防火墙规则（修复后）
 10-agh-sni.nft.orig       同文件修复前版本（回滚用）
-agh-sni-watchdog.sh       watchdog（支持 --once）
-agh-sni-watchdog.init     procd 服务定义
-deploy.sh                 verify / install-core / install-firewall / install-watchdog / rollback
+agh-sni-watchdog.sh       可选：手动体检 / 按需恢复的守护脚本（当前未部署）
+agh-sni-watchdog.init     可选：对应 procd 服务定义
+deploy.sh                 verify / install-core / install-firewall / install-watchdog(可选) / rollback
 rawrst.go, rawrst-arm64   复现 EPERM 的最小程序（诊断用，1.5 MB）
 remote-run.sh             本机调试辅助：把本地脚本 scp 到路由器执行（凭据走环境变量）
+README.md                 本文件
 ```
 
 > `AdGuardHome-arm64` 有 23 MB，若不想让仓库变大，可以删掉它，按 §3.1 的命令自行构建。
@@ -166,8 +196,8 @@ scp -O -r fixes/sni-queue-recovery root@192.168.31.2:/tmp/sni-fix
 sh /tmp/sni-fix/deploy.sh verify            # 基线体检
 sh /tmp/sni-fix/deploy.sh install-core      # 换核心（自动备份 + 失败自动回滚，DNS 中断 5~10 秒）
 sh /tmp/sni-fix/deploy.sh install-firewall  # 安装 nft 规则并热加载 notrack 链
-sh /tmp/sni-fix/deploy.sh install-watchdog  # 装 watchdog
 sh /tmp/sni-fix/deploy.sh verify            # 复验
+# install-watchdog 是可选的安全网，见 §3.3 的结论，默认不装
 ```
 
 回滚：
@@ -181,15 +211,16 @@ cp /etc/nftables.d/10-agh-sni.nft.orig /etc/nftables.d/10-agh-sni.nft && fw4 rel
 
 - 面板的「一键升级核心」会用官方发布覆盖补丁版；升级后重跑 `install-core`，或等上游合并补丁。
 - 部署后路由器上的落点是：`/opt/AdGuardHome/AdGuardHome`（+ `.bak-<时间戳>` 与 `.sha256`）、
-  `/etc/nftables.d/10-agh-sni.nft`、`/usr/bin/agh-sni-watchdog.sh`、`/etc/init.d/agh-sni-watchdog`。
+  `/etc/nftables.d/10-agh-sni.nft`、`/etc/init.d/AdGuardHome`（多了 `TZ` 环境变量）。
+  **没有常驻脚本**。
 - `net.core.rmem_default` 不必手动调，补丁版自己设置 socket 缓冲。
 - `/etc/adguardhome/adguardhome.yaml` 是旧副本，真正生效的是 `/opt/AdGuardHome/AdGuardHome.yaml`
   （本面板的查找顺序 `/opt` 优先，所以没问题；手工改配置时注意别改错文件）。
-- 日常复核：
+- `crash.log` 不轮转（AGH 只是把 stderr 重定向进去），约 30 KB/天，偶尔清理即可。
+- 日常复核（三条命令，无需任何脚本）：
 
   ```sh
-  cat /proc/net/netfilter/nfnetlink_queue                   # queue 7 是否有人绑定
-  nft list chain inet fw4 agh_sni_notrack | grep counter     # RST 放行计数是否增长
+  cat /proc/net/netfilter/nfnetlink_queue                  # queue 7 是否有人绑定
+  nft list chain inet fw4 agh_sni_notrack | grep counter    # RST 放行计数是否增长
   grep "sni filter counters" /opt/AdGuardHome/crash.log | tail -1
-  /usr/bin/agh-sni-watchdog.sh --once
   ```

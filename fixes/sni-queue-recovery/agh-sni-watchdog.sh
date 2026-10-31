@@ -20,7 +20,11 @@ NFT_CHAIN="${NFT_CHAIN:-inet fw4 agh_sni}"
 
 log() {
 	logger -t agh-sni-watchdog -- "$*" 2>/dev/null
-	echo "agh-sni-watchdog: $*"
+	# 只在交互式终端回显。procd 会把 stdout 转发给 logd，回显会让同一条
+	# 日志在 syslog 里出现两次（一条 user.notice，一条 daemon.info）。
+	if [ -t 1 ]; then
+		echo "agh-sni-watchdog: $*"
+	fi
 }
 
 # queue_state 输出 "<peer_port> <queue_total> <id_seq>"；队列不存在时输出空。

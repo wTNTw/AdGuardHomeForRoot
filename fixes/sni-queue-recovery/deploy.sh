@@ -5,7 +5,8 @@
 #   sh deploy.sh verify            只体检：队列是否绑定、nft 链是否在、核心版本、DNS
 #   sh deploy.sh install-core      备份原二进制 → 换成补丁版 → 重启 → 验证（失败自动回滚）
 #   sh deploy.sh install-firewall  安装 /etc/nftables.d/10-agh-sni.nft（含 RST notrack 修复）
-#   sh deploy.sh install-watchdog  装 watchdog 脚本 + procd 服务并启动
+#   sh deploy.sh patch-tz          给 /etc/init.d/AdGuardHome 加 TZ=Asia/Shanghai（日志不再是 UTC）
+#   sh deploy.sh install-watchdog  【可选】装 watchdog（见 README §3.3：日常不需要）
 #   sh deploy.sh rollback          回滚核心到最近一次备份
 #
 # 设计原则：任何一步失败都自动回到工作状态，不会把 DNS 弄挂。
@@ -161,6 +162,8 @@ install_firewall() {
 }
 
 install_watchdog() {
+	log "注意：README §3.3 的结论是日常不需要常驻 watchdog（补丁核心 15.9h 零故障），"
+	log "      这条命令只在需要临时加安全网时使用。"
 	cp "$HERE/agh-sni-watchdog.sh" /usr/bin/agh-sni-watchdog.sh
 	chmod 755 /usr/bin/agh-sni-watchdog.sh
 	cp "$HERE/agh-sni-watchdog.init" /etc/init.d/agh-sni-watchdog
@@ -169,6 +172,29 @@ install_watchdog() {
 	/etc/init.d/agh-sni-watchdog restart
 	sleep 2
 	log "watchdog: $(/usr/bin/agh-sni-watchdog.sh --once || true)"
+}
+
+# patch_tz 给 AGH 的 init 脚本加 TZ，消除每次启动的 UTC 告警，并让 crash.log
+# 的时间戳和 syslog（CST）对得上。AGH 内置 tzdata（main.go 里 _ "time/tzdata"），
+# 所以不需要装 zoneinfo。可重复执行。
+patch_tz() {
+	script="/etc/init.d/AdGuardHome"
+	[ -f "$script" ] || die "找不到 $script"
+
+	if grep -q 'procd_set_param env TZ=' "$script"; then
+		log "$script 已经带 TZ，无需修改"
+
+		return 0
+	fi
+
+	cp -p "$script" "$script.bak-$(date +%Y%m%d-%H%M%S)"
+	sed -i 's|^\(\s*\)procd_set_param pidfile .*|&\n\1procd_set_param env TZ=Asia/Shanghai|' "$script"
+
+	if ! grep -q 'procd_set_param env TZ=' "$script"; then
+		die "写入失败，$script 未改动（备份在同目录 .bak-*）"
+	fi
+
+	log "已加入 TZ=Asia/Shanghai，重启后生效：$INIT_SCRIPT restart"
 }
 
 rollback() {
@@ -184,7 +210,8 @@ case "${1:-}" in
 verify) verify ;;
 install-core) install_core ;;
 install-firewall) install_firewall ;;
+patch-tz) patch_tz ;;
 install-watchdog) install_watchdog ;;
 rollback) rollback ;;
-*) echo "用法: $0 {verify|install-core|install-firewall|install-watchdog|rollback}"; exit 2 ;;
+*) echo "用法: $0 {verify|install-core|install-firewall|patch-tz|install-watchdog|rollback}"; exit 2 ;;
 esac
