@@ -178,7 +178,9 @@ sni-queue-recovery.patch  上游 diff（单文件 +83/-3）
 10-agh-sni.nft.orig       同文件修复前版本（回滚用）
 agh-sni-watchdog.sh       可选：手动体检 / 按需恢复的守护脚本（当前未部署）
 agh-sni-watchdog.init     可选：对应 procd 服务定义
-deploy.sh                 verify / install-core / install-firewall / install-watchdog(可选) / rollback
+deploy.sh                 verify / install-core / install-firewall / patch-tz / install-watchdog(可选) / rollback
+phone-deploy.sh           手机端（KernelSU 模块）换核心：备份 + sha 校验 + SELinux 标签对齐 + 原子替换
+phone-check.sh            手机端体检：版本 / queue 7 / 计数器 / error 统计 / 配置对齐项
 rawrst.go, rawrst-arm64   复现 EPERM 的最小程序（诊断用，1.5 MB）
 remote-run.sh             本机调试辅助：把本地脚本 scp 到路由器执行（凭据走环境变量）
 README.md                 本文件
@@ -207,7 +209,64 @@ sh /tmp/sni-fix/deploy.sh rollback          # 核心
 cp /etc/nftables.d/10-agh-sni.nft.orig /etc/nftables.d/10-agh-sni.nft && fw4 reload
 ```
 
-## 7. 注意事项
+## 7. 手机侧：AdGuardHome for Root（KernelSU）——同样处理并已对齐
+
+现场：OnePlus 13（PJZ110，Android 16，KernelSU），模块 `AdGuardHome for Root 20261027`，
+核心 `/data/adb/agh/bin/AdGuardHome`，队列 7 由 `AGH_SNI` / `AGH_SNI6` 两条 iptables 链送入
+（`--connbytes 0:20000 --queue-bypass`，hook 在 `OUTPUT`）。
+
+### 7.1 改动前
+
+- 核心 `v2026-10-29`，sha256 `8baeb11a…` —— 与路由器**打补丁前**的二进制完全一致，隐患同源
+- 队列 7 已绑定、`total=0 dropped=0`、`names=4154 resets=460` → 当时还没复发
+- `crash.log.1` 里 ENOBUFS 0 次、重建 0 次 → 只是还没赶上那次 TLS 突发
+- **一个持续性报错**：`dnsproxy: exchange failed upstream=127.0.0.1:53 … connection refused`，
+  每个私网地址的 PTR 查询都报一次，crash.log 累计 3523 条、crash.log.1 里 15969 条。
+  根因：`use_private_ptr_resolvers: true` + `local_ptr_upstreams: []` → 退回 Android 的
+  系统解析器，而 Android 的 `127.0.0.1:53` 并不监听（netd 不走 localhost）
+
+### 7.2 做的改动
+
+| 动作 | 结果 |
+|---|---|
+| 备份原核心，同目录暂存新二进制 → `chown root:net_raw` → `restorecon` 对齐 `adb_data_file` 标签 → `mv` 原子替换（避开 ETXTBSY） | 版本与 sha256 与路由器一致 |
+| `tool.sh stop` → 改 yaml → `tool.sh start`（模块的 `reload` **只重载 iptables，不重启进程**，容易误判） | queue 7 重新绑定，计数从 0 开始 |
+| `use_private_ptr_resolvers: true → false` | PTR 报错从 ~84 条/分钟降到 **0** |
+| `clients.runtime_sources.rdns: true → false` | 与路由器一致，省掉无用的 rDNS/PTR 流量 |
+| 清理 `/data/local/tmp` 推送的二进制与脚本 | 无残留 |
+
+### 7.3 改动后验证
+
+```
+版本 v2026-10-29-mod-sni1        pid 8748, queue 7 → 8748, copy range 16384, total=0
+error=0  enobufs=0  re-register=0  in-addr.arpa=0     （改前 126 条 error / 1.5 分钟）
+counters: received=1471 inspected=128 names=103 resets=18 verdict_errors=0
+DNS: ping www.baidu.com 正常应答
+```
+
+### 7.4 手机**不需要**的一项修复
+
+Android 没有 fw4 的 `ct state invalid : drop` 出站规则，注入的伪造 RST 能正常发出
+（`sni_resets_sent` 一路增长：旧进程 3 小时 460 次），所以 **不需要 `agh_sni_notrack`**。
+
+### 7.5 两端当前状态对照
+
+| 项 | 路由器 | 手机 |
+|---|---|---|
+| 核心 | `v2026-10-29-mod-sni1` | 同 |
+| 队列 / copy range | 7 / 16384 | 7 / 16384 |
+| 入队规则 | nft `prerouting`，`ct original bytes 0-20000` | iptables `OUTPUT` + `AGH_SNI`，`--connbytes 0:20000` |
+| RST 放行 | 需要 `agh_sni_notrack`（fw4 invalid drop） | 不需要 |
+| `use_private_ptr_resolvers` | false | false（已对齐） |
+| `clients.runtime_sources.rdns` | false | false（已对齐） |
+| 日志时区 | Asia/Shanghai（init 里加 TZ） | Asia/Shanghai（模块自带） |
+| `log.verbose` | false | false |
+| 常驻脚本 | 无 | 模块自带 `watchdog.sh`（只修 iptables 劫持，不碰 nfqueue） |
+
+操作：`sh phone-deploy.sh`（换核心）、`sh phone-check.sh`（体检），两者都直接 `adb push`
+到 `/data/local/tmp` 后用 `su -c` 跑；回滚把 `AdGuardHome.bak-<时间戳>` 换回去即可。
+
+## 8. 注意事项
 
 - 面板的「一键升级核心」会用官方发布覆盖补丁版；升级后重跑 `install-core`，或等上游合并补丁。
 - 部署后路由器上的落点是：`/opt/AdGuardHome/AdGuardHome`（+ `.bak-<时间戳>` 与 `.sha256`）、
