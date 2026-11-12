@@ -1,0 +1,37 @@
+# AdGuardHome SNI filter (queue_num 7) - see /proc/net/netfilter/nfnetlink_queue
+#
+# 入队规则同步自上游模块（liuzq2002/Adguard-Home-For-Magisk-Mod scripts/iptables.sh，
+# 2026-11-09）：只把“带载荷的数据段”送进 NFQUEUE——
+#   `tcp flags & (fin|syn|rst|psh|ack|urg) == ack` 的纯 ACK 直接 RETURN（无载荷，核心不需要）；
+#   `tcp flags & (syn|fin|rst) == 0` 的数据段才入队。
+# 注意 mask 必须包含 psh：漏了会把 ACK+PSH 的数据段当成纯 ACK 丢掉（SNI 会整段失效）。
+# 这样队列吞吐比原先的 `ct original bytes 0-20000`（连纯 ACK 一起送）少一半左右，
+# 是上游所说的“SNI 稳定性优化”的核心；配合核心侧 8 MiB 收包缓冲 + 重建退避，
+# 基本不会再出现 ENOBUFS。
+#
+# 仍然保留 `queue flags bypass`：AdGuardHome 不在时流量照常放行。
+chain agh_sni {
+	type filter hook prerouting priority -160; policy accept;
+
+	iifname != "lo" tcp dport { 443, 8443 } ct original bytes 0-20000 tcp flags & (fin|syn|rst|psh|ack|urg) == ack counter return
+	iifname != "lo" tcp dport { 443, 8443 } ct original bytes 0-20000 tcp flags & (syn|fin|rst) == 0 counter queue flags bypass to 7
+	iifname != "lo" udp dport 443 ct original bytes 0-20000 counter queue flags bypass to 7
+}
+
+# AdGuardHome 注入的伪造 RST（源地址是远端站点，不是本机地址）在 conntrack 里
+# 找不到对应条目，会被 fw4 的 output 链 `ct state vmap { invalid : drop, ... }`
+# 丢掉——sendto 因此返回 EPERM（crash.log 里 "sending the reset segment ...
+# operation not permitted"），被拦的连接只能卡到超时，而不是文档说的十几毫秒失败。
+#
+# `notrack` 在 conntrack（priority -200）之前生效，让这些包变成 untracked，
+# 于是不再命中 `ct state invalid` 的 drop。判据是 `fib saddr type != local`，
+# 只对"源地址不是本机"的包生效；本机进程正常发出的 RST（源地址为本机）仍然
+# 走原来的 conntrack 判定，防火墙强度不变。output 钩子只处理本机产生的包，
+# LAN 客户端无法利用这条规则绕过 forward 链。
+#
+# 实测：被拦的 SNI 从"5 秒超时"变成"0.05 秒 ConnectionResetError"。
+chain agh_sni_notrack {
+	type filter hook output priority -300; policy accept;
+
+	tcp flags & (rst) == rst fib saddr type != local counter notrack
+}
