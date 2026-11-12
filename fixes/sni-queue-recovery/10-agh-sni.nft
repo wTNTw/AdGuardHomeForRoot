@@ -1,13 +1,20 @@
 # AdGuardHome SNI filter (queue_num 7) - see /proc/net/netfilter/nfnetlink_queue
-# Hooked before fw4's tproxy/mangle rules so the SNI ClientHello is queued even
-# when a transparent proxy would otherwise take the packet out of the forward path.
-# `queue flags bypass` keeps traffic flowing when AdGuardHome is not listening.
-# The UDP/443 line feeds the core's sni_filter.drop_quic handling (QUIC packets are
-# only queued for the first 20 KB of a flow, same as the TCP rule).
+#
+# 入队规则同步自上游模块（liuzq2002/Adguard-Home-For-Magisk-Mod scripts/iptables.sh，
+# 2026-11-09）：只把“带载荷的数据段”送进 NFQUEUE——
+#   `tcp flags & (fin|syn|rst|psh|ack|urg) == ack` 的纯 ACK 直接 RETURN（无载荷，核心不需要）；
+#   `tcp flags & (syn|fin|rst) == 0` 的数据段才入队。
+# 注意 mask 必须包含 psh：漏了会把 ACK+PSH 的数据段当成纯 ACK 丢掉（SNI 会整段失效）。
+# 这样队列吞吐比原先的 `ct original bytes 0-20000`（连纯 ACK 一起送）少一半左右，
+# 是上游所说的“SNI 稳定性优化”的核心；配合核心侧 8 MiB 收包缓冲 + 重建退避，
+# 基本不会再出现 ENOBUFS。
+#
+# 仍然保留 `queue flags bypass`：AdGuardHome 不在时流量照常放行。
 chain agh_sni {
 	type filter hook prerouting priority -160; policy accept;
 
-	iifname != "lo" tcp dport { 443, 8443 } ct original bytes 0-20000 counter queue flags bypass to 7
+	iifname != "lo" tcp dport { 443, 8443 } ct original bytes 0-20000 tcp flags & (fin|syn|rst|psh|ack|urg) == ack counter return
+	iifname != "lo" tcp dport { 443, 8443 } ct original bytes 0-20000 tcp flags & (syn|fin|rst) == 0 counter queue flags bypass to 7
 	iifname != "lo" udp dport 443 ct original bytes 0-20000 counter queue flags bypass to 7
 }
 

@@ -266,7 +266,72 @@ Android 没有 fw4 的 `ct state invalid : drop` 出站规则，注入的伪造 
 操作：`sh phone-deploy.sh`（换核心）、`sh phone-check.sh`（体检），两者都直接 `adb push`
 到 `/data/local/tmp` 后用 `su -c` 跑；回滚把 `AdGuardHome.bak-<时间戳>` 换回去即可。
 
-## 8. 注意事项
+## 8. 同步上游（2026-11-12）
+
+上游来源：
+
+- 核心：`liuzq2002/AdguardHome-Mod` 的 `main`（HEAD `77a6852`），比我们原先用的 `v2026-10-29` 标签多 4 个实质提交
+- 模块：`liuzq2002/Adguard-Home-For-Magisk-Mod` 的 release `2026.11.11`（其中 `scripts/iptables.sh` 日期 2026-11-09）
+
+### 8.1 上游到底改了什么
+
+核心（`v2026-10-29..main`）：
+
+| 提交 | 内容 | 影响 |
+|---|---|---|
+| `954285c` | Drop the dead UIDs code from the SNI filter | 删 `sni_filter.uids` 死代码；旧配置里有 `uids: []` 仍能正常加载 |
+| `041ca81` | Split the SNI status into blocked and processed | 查询日志里“已阻止（SNI）”与“已处理（SNI）”分开显示 |
+| `260c7b5` | Drop the reason filter from the query log | 查询日志不再按拦截原因过滤 |
+| `f7277bd` | Guard the panel against the newer Object/Array methods | 老 WebView 下面板不再白屏 |
+
+**注意：上游核心并没有修我们遇到的 ENOBUFS/重建放弃**（`firewall_linux.go` 只改了注释），
+所以我们的 `sni-queue-recovery.patch` 仍然必需。
+
+模块 `scripts/iptables.sh`——**这才是上游 changelog 里“SNI 稳定性优化”的实质**：
+
+```sh
+iptables -A AGH_SNI -m owner --uid-owner 0 --gid-owner 9000 -j RETURN   # 精准放行自身流量
+iptables -A AGH_SNI -o lo -j RETURN
+iptables -A AGH_SNI -p tcp --dport "$port" --tcp-flags ALL ACK -j RETURN            # 纯 ACK 不入队
+iptables -A AGH_SNI -p tcp --dport "$port" --tcp-flags SYN,FIN,RST NONE \
+    -j NFQUEUE --queue-num "$sni_queue" --queue-bypass                              # 只送带载荷的数据段
+```
+
+对比我们原先的 `--connbytes 0:20000`（连纯 ACK 一起送进队列），上游只把带载荷的数据段
+入队，队列吞吐直接砍掉一半以上。
+
+### 8.2 我们的落地方式
+
+- **核心**：把 `sni-queue-recovery.patch` rebase 到上游 main 后重新交叉编译 →
+  `v2026-10-29-mod-sni2`，sha256 `31b7836f727285b53e2940de7ce191c0db03e7b61ed615e5cd6b88f49fdba97a`
+  （`go test ./internal/snifilter/` 通过；前端静态资源用上游 `client_v2` 重新构建）
+- **路由器 nft**：把上游的 tcp-flags 语义翻译成 nftables：
+
+  ```nft
+  ... ct original bytes 0-20000 tcp flags & (fin|syn|rst|psh|ack|urg) == ack counter return
+  ... ct original bytes 0-20000 tcp flags & (syn|fin|rst) == 0 counter queue flags bypass to 7
+  ```
+
+  **坑（已踩）**：mask 漏写 `psh` 时，`ACK+PSH`（带载荷的 ClientHello）会被当成“纯 ACK”
+  提前 `return`，SNI 整段失效（实测 5 分钟内 0 个包入队）。mask 必须是
+  `fin|syn|rst|psh|ack|urg`，与 iptables 的 `--tcp-flags ALL ACK` 等价。
+- 路由器自身流量本来就不走 `prerouting`，不需要上游那条 `--uid-owner` 放行。
+
+### 8.3 实测效果（路由器，60 秒采样）
+
+```
+入队 85 个，纯 ACK 被 RETURN 181 个  → 约 68% 的包不再进用户态
+SNI A/B：未拦 handshake OK 0.12~0.13s；被拦 ConnectionResetError 0.04~0.05s
+queue: total=0，启动段 error=0 warn=0，版本 v2026-10-29-mod-sni2
+```
+
+### 8.4 手机侧（待接入 adb）
+
+同样的两件事要落到手机模块：换核心（`phone-deploy.sh` 的 `WANT` 已更新为新 sha）
++ 把 `/data/adb/agh/scripts/iptables.sh` 里 `AGH_SNI` 的两条规则换成上游的
+`--tcp-flags` 版本（注意 mask 要含 psh，否则就是上面那个坑）。
+
+## 9. 注意事项
 
 - 面板的「一键升级核心」会用官方发布覆盖补丁版；升级后重跑 `install-core`，或等上游合并补丁。
 - 部署后路由器上的落点是：`/opt/AdGuardHome/AdGuardHome`（+ `.bak-<时间戳>` 与 `.sha256`）、

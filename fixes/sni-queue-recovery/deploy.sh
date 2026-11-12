@@ -19,7 +19,7 @@ INIT_SCRIPT="/etc/init.d/AdGuardHome"
 NFT_CHAIN="inet fw4 agh_sni"
 NFT_NOTRACK="inet fw4 agh_sni_notrack"
 NFT_FILE="/etc/nftables.d/10-agh-sni.nft"
-EXPECTED_SHA="6437b12373b0ac17a1da11e8678109da19d8267b96a07673b1a7e2b2f55cc64f"
+EXPECTED_SHA="31b7836f727285b53e2940de7ce191c0db03e7b61ed615e5cd6b88f49fdba97a"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 NEW_BIN="$HERE/AdGuardHome-arm64"
 

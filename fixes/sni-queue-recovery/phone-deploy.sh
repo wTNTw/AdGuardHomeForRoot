@@ -6,7 +6,7 @@ BIN=/data/adb/agh/bin/AdGuardHome
 NEW=/data/local/tmp/AdGuardHome-arm64
 STAMP=$(date +%Y%m%d-%H%M%S)
 BAK=$BIN.bak-$STAMP
-WANT=6437b12373b0ac17a1da11e8678109da19d8267b96a07673b1a7e2b2f55cc64f
+WANT=31b7836f727285b53e2940de7ce191c0db03e7b61ed615e5cd6b88f49fdba97a
 
 echo "== 1) 备份原核心 =="
 cp -a "$BIN" "$BAK" && echo "backup -> $BAK"
