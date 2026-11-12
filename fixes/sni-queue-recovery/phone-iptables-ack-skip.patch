@@ -1,0 +1,24 @@
+--- a/scripts/iptables.sh
++++ b/scripts/iptables.sh
+@@ -266,6 +266,8 @@
+   local port
+ 
+   for port in "$@"; do
++    $cmd -t filter -C "$chain" -p tcp --dport "$port" --tcp-flags ALL ACK \
++      -j RETURN >/dev/null 2>&1 || return 1
+     $cmd -t filter -C "$chain" -p tcp --dport "$port" -m connbytes \
+       --connbytes "$SNI_CONNBYTES" --connbytes-dir original --connbytes-mode bytes \
+       -j NFQUEUE --queue-num "$queue" --queue-bypass >/dev/null 2>&1 || return 1
+@@ -302,6 +304,12 @@
+   $cmd -t filter -F "$chain" >/dev/null 2>&1
+   $cmd -t filter -N "$chain" >/dev/null 2>&1
+ 
++  # 纯 ACK 不携带载荷，核心不需要它；先放行能把队列吞吐砍掉一半以上（同步上游做法）。
++  # 保留 connbytes 上限：否则长连接的每个数据段都会进用户态，反而更重。
++  for port in "$@"; do
++    $cmd -t filter -A "$chain" -p tcp --dport "$port" --tcp-flags ALL ACK \
++      -j RETURN || return 1
++  done
+   for port in "$@"; do
+     $cmd -t filter -A "$chain" -p tcp --dport "$port" -m connbytes \
+       --connbytes "$SNI_CONNBYTES" --connbytes-dir original --connbytes-mode bytes \

@@ -40,9 +40,13 @@ sha256sum "$BIN"
 echo "== 5) 版本 =="
 "$BIN" --version
 
-echo "== 6) 重启核心（tool.sh reload） =="
-/data/adb/agh/scripts/tool.sh reload
-sleep 10
+# 注意：模块的 tool.sh reload 只重载 iptables，不重启进程（PID 不变），
+# 换二进制后必须 stop + start 才会真正用到新核心。
+echo "== 6) 重启核心（stop + start） =="
+/data/adb/agh/scripts/tool.sh stop
+sleep 2
+/data/adb/agh/scripts/tool.sh start
+sleep 12
 
 echo "== 7) 状态 =="
 ps -A -o PID,RSS,ETIME,NAME 2>/dev/null | grep -i adguard

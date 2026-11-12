@@ -181,6 +181,7 @@ agh-sni-watchdog.init     可选：对应 procd 服务定义
 deploy.sh                 verify / install-core / install-firewall / patch-tz / install-watchdog(可选) / rollback
 phone-deploy.sh           手机端（KernelSU 模块）换核心：备份 + sha 校验 + SELinux 标签对齐 + 原子替换
 phone-check.sh            手机端体检：版本 / queue 7 / 计数器 / error 统计 / 配置对齐项
+phone-iptables-ack-skip.patch  手机模块 iptables.sh 的改动：纯 ACK 先 RETURN 再入队（对 20261027 模块）
 rawrst.go, rawrst-arm64   复现 EPERM 的最小程序（诊断用，1.5 MB）
 remote-run.sh             本机调试辅助：把本地脚本 scp 到路由器执行（凭据走环境变量）
 README.md                 本文件
@@ -325,11 +326,30 @@ SNI A/B：未拦 handshake OK 0.12~0.13s；被拦 ConnectionResetError 0.04~0.05
 queue: total=0，启动段 error=0 warn=0，版本 v2026-10-29-mod-sni2
 ```
 
-### 8.4 手机侧（待接入 adb）
+### 8.4 手机侧（已完成）
 
-同样的两件事要落到手机模块：换核心（`phone-deploy.sh` 的 `WANT` 已更新为新 sha）
-+ 把 `/data/adb/agh/scripts/iptables.sh` 里 `AGH_SNI` 的两条规则换成上游的
-`--tcp-flags` 版本（注意 mask 要含 psh，否则就是上面那个坑）。
+两件事都已落地：
+
+1. **核心**：`phone-deploy.sh` 换成 `v2026-10-29-mod-sni2`（脚本已改为 `tool.sh stop` + `start`，
+   因为模块的 `reload` 不重启进程）。备份为 `AdGuardHome.bak-<时间戳>`。
+2. **入队规则**：手机跑的是 twoone3 的模块（`AdguardHome for Root 20261027`），
+   SNI 规则由它自己的 `scripts/iptables.sh` 生成（`--connbytes 0:20000`）。
+   打上 `phone-iptables-ack-skip.patch`：在每个端口的 NFQUEUE 规则**之前**插一条
+   `--tcp-flags ALL ACK -j RETURN`，同时把这条写进 `sni_chain_is_complete()` 的完整性
+   校验（否则守护逻辑会误判为“链不完整”而反复重建）。
+
+   一个刻意的差异：上游模块**丢掉了 connbytes**，只顾 tcp-flags；那样长连接的每个数据段
+   都会进用户态（下载 10 MB ≈ 7000 个包），反而更重。我们两边都要：
+   **connbytes 限前 20 KB + 纯 ACK 不入队**。
+
+实测（手机，规则计数器）：
+
+```
+dport 443 纯 ACK RETURN 994 个，NFQUEUE 189 个  → 约 84% 的包不再进用户态
+queue 7 → 29126，total=0；counters received=179 names=20 verdict_errors=0；DNS 正常
+```
+
+回滚：`cp /data/adb/agh/scripts/iptables.sh.bak-<时间戳> …/iptables.sh && tool.sh stop/start`。
 
 ## 9. 注意事项
 
